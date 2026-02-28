@@ -1,0 +1,323 @@
+#include "QtShim.h"
+import std;
+
+TerminalBuffer::TerminalBuffer() {
+  ensureScreenSize();
+}
+
+void TerminalBuffer::resize(int columns, int rows) {
+  m_columns = qMax(1, columns);
+  m_rows = qMax(1, rows);
+  ensureScreenSize();
+  clampCursor();
+}
+
+void TerminalBuffer::clear() {
+  m_scrollback.clear();
+  for (auto &line : m_screen) {
+    line = blankRow(m_currentFg, m_currentBg);
+  }
+  m_cursorRow = 0;
+  m_cursorColumn = 0;
+}
+
+void TerminalBuffer::clearLine() {
+  if (m_cursorRow < 0 || m_cursorRow >= m_screen.size()) {
+    return;
+  }
+  m_screen[m_cursorRow] = blankRow(m_currentFg, m_currentBg);
+  clampCursor();
+}
+
+void TerminalBuffer::setScrollbackLimit(int lines) {
+  m_scrollbackLimit = qMax(0, lines);
+  while (m_scrollback.size() > m_scrollbackLimit) {
+    m_scrollback.pop_front();
+  }
+}
+
+void TerminalBuffer::setDefaultColors(const QColor &foreground,
+                                      const QColor &background) {
+  m_defaultFg = foreground;
+  m_defaultBg = background;
+  resetAttributes();
+}
+
+void TerminalBuffer::setForeground(const QColor &foreground) {
+  m_currentFg = foreground;
+}
+
+void TerminalBuffer::setBackground(const QColor &background) {
+  m_currentBg = background;
+}
+
+void TerminalBuffer::setBold(bool bold) {
+  m_currentBold = bold;
+}
+
+void TerminalBuffer::setItalic(bool italic) {
+  m_currentItalic = italic;
+}
+
+void TerminalBuffer::setUnderline(bool underline) {
+  m_currentUnderline = underline;
+}
+
+void TerminalBuffer::setStrikethrough(bool strikethrough) {
+  m_currentStrikethrough = strikethrough;
+}
+
+void TerminalBuffer::setInverse(bool inverse) {
+  m_currentInverse = inverse;
+}
+
+void TerminalBuffer::resetAttributes() {
+  m_currentFg = m_defaultFg;
+  m_currentBg = m_defaultBg;
+  m_currentBold = false;
+  m_currentItalic = false;
+  m_currentUnderline = false;
+  m_currentStrikethrough = false;
+  m_currentInverse = false;
+}
+
+QColor TerminalBuffer::defaultForeground() const {
+  return m_defaultFg;
+}
+
+QColor TerminalBuffer::defaultBackground() const {
+  return m_defaultBg;
+}
+
+void TerminalBuffer::putChar(QChar ch) {
+  if (m_cursorColumn >= m_columns) {
+    newline();
+  }
+  if (m_cursorRow < 0 || m_cursorRow >= m_screen.size()) {
+    return;
+  }
+
+  Cell cell;
+  cell.ch = ch;
+  cell.bold = m_currentBold;
+  cell.italic = m_currentItalic;
+  cell.underline = m_currentUnderline;
+  cell.strikethrough = m_currentStrikethrough;
+  if (m_currentInverse) {
+    cell.fg = m_currentBg;
+    cell.bg = m_currentFg;
+  } else {
+    cell.fg = m_currentFg;
+    cell.bg = m_currentBg;
+  }
+
+  m_screen[m_cursorRow][m_cursorColumn] = cell;
+  m_cursorColumn++;
+  if (m_cursorColumn >= m_columns) {
+    newline();
+  }
+}
+
+void TerminalBuffer::newline() {
+  m_cursorColumn = 0;
+  if (m_cursorRow == m_rows - 1) {
+    pushScrollback(m_screen.front());
+    m_screen.pop_front();
+    m_screen.push_back(blankRow(m_currentFg, m_currentBg));
+  } else {
+    m_cursorRow++;
+  }
+}
+
+void TerminalBuffer::carriageReturn() {
+  m_cursorColumn = 0;
+}
+
+void TerminalBuffer::backspace() {
+  if (m_cursorColumn > 0) {
+    m_cursorColumn--;
+  }
+}
+
+void TerminalBuffer::tab() {
+  const int tabStop = 8;
+  int nextStop = ((m_cursorColumn / tabStop) + 1) * tabStop;
+  while (m_cursorColumn < nextStop && m_cursorColumn < m_columns) {
+    putChar(QLatin1Char(' '));
+  }
+}
+
+void TerminalBuffer::setCursorPosition(int row, int column) {
+  m_cursorRow = qBound(0, row, m_rows - 1);
+  m_cursorColumn = qBound(0, column, m_columns - 1);
+}
+
+int TerminalBuffer::cursorRow() const {
+  return m_cursorRow;
+}
+
+int TerminalBuffer::cursorColumn() const {
+  return m_cursorColumn;
+}
+
+int TerminalBuffer::rows() const {
+  return m_rows;
+}
+
+int TerminalBuffer::columns() const {
+  return m_columns;
+}
+
+int TerminalBuffer::totalLines() const {
+  return m_scrollback.size() + m_screen.size();
+}
+
+QString TerminalBuffer::lineAt(int index) const {
+  if (index < 0 || index >= totalLines()) {
+    return QString();
+  }
+  if (index < m_scrollback.size()) {
+    return lineToString(m_scrollback[index]);
+  }
+  return lineToString(m_screen[index - m_scrollback.size()]);
+}
+
+TerminalBuffer::Cell TerminalBuffer::cellAt(int index, int column) const {
+  if (index < 0 || index >= totalLines()) {
+    return Cell{};
+  }
+  const QVector<Cell> &line =
+      (index < m_scrollback.size())
+          ? m_scrollback[index]
+          : m_screen[index - m_scrollback.size()];
+  if (column < 0 || column >= line.size()) {
+    return Cell{};
+  }
+  return line[column];
+}
+
+TerminalBuffer::Cell TerminalBuffer::cellAtVisible(int row, int column,
+                                                   int scrollOffset) const {
+  int total = totalLines();
+  int start = qMax(0, total - m_rows - scrollOffset);
+  return cellAt(start + row, column);
+}
+
+bool TerminalBuffer::findNext(const QString &term, int startLine,
+                              int startColumn, bool forward,
+                              Match *match) const {
+  if (!match) {
+    return false;
+  }
+  match->line = -1;
+  match->column = -1;
+  if (term.isEmpty()) {
+    return false;
+  }
+
+  const int total = totalLines();
+  if (total <= 0) {
+    return false;
+  }
+
+  if (forward) {
+    int lineIndex = qMax(0, startLine);
+    int columnIndex = qMax(0, startColumn);
+    for (int line = lineIndex; line < total; ++line) {
+      const QString current = lineAt(line);
+      int start = (line == lineIndex) ? columnIndex : 0;
+      int found = current.indexOf(term, start, Qt::CaseInsensitive);
+      if (found >= 0) {
+        match->line = line;
+        match->column = found;
+        return true;
+      }
+    }
+  } else {
+    int lineIndex = qMin(startLine, total - 1);
+    int columnIndex = qMax(0, startColumn);
+    for (int line = lineIndex; line >= 0; --line) {
+      const QString current = lineAt(line);
+      int start = current.size();
+      if (line == lineIndex) {
+        start = qBound(0, columnIndex, current.size());
+      }
+      int found = current.lastIndexOf(term, start, Qt::CaseInsensitive);
+      if (found >= 0) {
+        match->line = line;
+        match->column = found;
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+QStringList TerminalBuffer::snapshot(int scrollOffset) const {
+  QStringList allLines;
+  allLines.reserve(m_scrollback.size() + m_screen.size());
+  for (const auto &line : m_scrollback) {
+    allLines.push_back(lineToString(line));
+  }
+  for (const auto &line : m_screen) {
+    allLines.push_back(lineToString(line));
+  }
+
+  int total = allLines.size();
+  int start = qMax(0, total - m_rows - scrollOffset);
+  return allLines.mid(start, m_rows);
+}
+
+QVector<TerminalBuffer::Cell> TerminalBuffer::blankRow(const QColor &fg,
+                                                       const QColor &bg) const {
+  QVector<Cell> row;
+  row.reserve(m_columns);
+  for (int i = 0; i < m_columns; ++i) {
+    Cell cell;
+    cell.ch = QLatin1Char(' ');
+    cell.fg = fg;
+    cell.bg = bg;
+    cell.bold = false;
+    row.push_back(cell);
+  }
+  return row;
+}
+
+void TerminalBuffer::ensureScreenSize() {
+  while (m_screen.size() < m_rows) {
+    m_screen.push_back(blankRow(m_defaultFg, m_defaultBg));
+  }
+  while (m_screen.size() > m_rows) {
+    m_screen.pop_back();
+  }
+  for (auto &line : m_screen) {
+    if (line.size() != m_columns) {
+      line = blankRow(m_defaultFg, m_defaultBg);
+    }
+  }
+}
+
+void TerminalBuffer::clampCursor() {
+  m_cursorRow = qBound(0, m_cursorRow, m_rows - 1);
+  m_cursorColumn = qBound(0, m_cursorColumn, m_columns - 1);
+}
+
+void TerminalBuffer::pushScrollback(const QVector<Cell> &line) {
+  if (m_scrollbackLimit <= 0) {
+    return;
+  }
+  m_scrollback.push_back(line);
+  while (m_scrollback.size() > m_scrollbackLimit) {
+    m_scrollback.pop_front();
+  }
+}
+
+QString TerminalBuffer::lineToString(const QVector<Cell> &line) const {
+  QString text;
+  text.reserve(line.size());
+  for (const Cell &cell : line) {
+    text.append(cell.ch);
+  }
+  return text;
+}

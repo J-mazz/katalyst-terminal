@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Katalyst Terminal
+Comment=Terminal emulator for KDE Plasma
+Exec=katalyst-terminal
+Icon=utilities-terminal
+Type=Application
+Categories=System;TerminalEmulator;KDE;
+Terminal=false

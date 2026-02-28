@@ -1,0 +1,64 @@
+#include "QtShim.h"
+import std;
+
+TerminalSession::TerminalSession(const TerminalConfig::TerminalProfile &profile,
+                                 QObject *parent)
+    : QObject(parent), m_profile(profile) {
+  m_pty = new PtyProcess(this);
+  m_buffer = new TerminalBuffer();
+  m_parser = new VtParser(m_buffer, this);
+
+  m_buffer->setDefaultColors(m_profile.foreground, m_profile.background);
+
+  connect(m_pty, &PtyProcess::dataReady, this,
+          &TerminalSession::handlePtyData);
+  connect(m_parser, &VtParser::titleChanged, this,
+          &TerminalSession::titleChanged);
+}
+
+TerminalSession::~TerminalSession() {
+  delete m_buffer;
+}
+
+void TerminalSession::startShell() {
+  QString program = m_profile.program;
+  if (program.isEmpty()) {
+    program = QString::fromLocal8Bit(qgetenv("SHELL"));
+  }
+  if (program.isEmpty()) {
+    program = QStringLiteral("/bin/bash");
+  }
+
+  QStringList env;
+  const QProcessEnvironment systemEnv = QProcessEnvironment::systemEnvironment();
+  for (const QString &key : systemEnv.keys()) {
+    env.push_back(key + QLatin1Char('=') + systemEnv.value(key));
+  }
+  for (const QString &entry : m_profile.env) {
+    env.push_back(entry);
+  }
+  if (!m_profile.term.isEmpty()) {
+    env.push_back(QStringLiteral("TERM=") + m_profile.term);
+  }
+
+  m_pty->start(program, m_profile.arguments, env);
+}
+
+void TerminalSession::sendInput(const QByteArray &data) {
+  m_pty->send(data);
+}
+
+void TerminalSession::resize(int columns, int rows) {
+  m_buffer->resize(columns, rows);
+  m_pty->setWindowSize(columns, rows);
+  emit screenUpdated();
+}
+
+TerminalBuffer *TerminalSession::buffer() const {
+  return m_buffer;
+}
+
+void TerminalSession::handlePtyData(const QByteArray &data) {
+  m_parser->feed(data);
+  emit screenUpdated();
+}
