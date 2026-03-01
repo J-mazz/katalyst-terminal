@@ -5,6 +5,9 @@
 // the module import we avoid redefinition clashes with `import std;`.
 #pragma once
 
+// --- C++ standard library (included before import std; to avoid redefinition) ---
+#include <memory>
+
 // --- Vulkan (must precede Qt Vulkan wrappers) ---
 #include <vulkan/vulkan.h>
 
@@ -292,7 +295,6 @@ class TerminalSession : public QObject {
 public:
 	TerminalSession(const TerminalConfig::TerminalProfile &profile,
 									QObject *parent = nullptr);
-	~TerminalSession() override;
 
 	void startShell();
 	void sendInput(const QByteArray &data);
@@ -308,7 +310,7 @@ private:
 	void handlePtyData(const QByteArray &data);
 
 	PtyProcess *m_pty = nullptr;
-	TerminalBuffer *m_buffer = nullptr;
+	std::unique_ptr<TerminalBuffer> m_buffer;
 	VtParser *m_parser = nullptr;
 	TerminalConfig::TerminalProfile m_profile;
 };
@@ -661,6 +663,9 @@ private:
 	VulkanTerminalWindow *m_window = nullptr;
 	VulkanRenderer *m_renderer = nullptr;
 	QWidget *m_container = nullptr;
+
+	int m_cellWidth = 8;
+	int m_cellHeight = 16;
 
 	int m_scrollOffset = 0;
 	bool m_userScroll = false;

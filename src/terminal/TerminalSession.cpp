@@ -5,8 +5,8 @@ TerminalSession::TerminalSession(const TerminalConfig::TerminalProfile &profile,
                                  QObject *parent)
     : QObject(parent), m_profile(profile) {
   m_pty = new PtyProcess(this);
-  m_buffer = new TerminalBuffer();
-  m_parser = new VtParser(m_buffer, this);
+  m_buffer = std::make_unique<TerminalBuffer>();
+  m_parser = new VtParser(m_buffer.get(), this);
 
   m_buffer->setDefaultColors(m_profile.foreground, m_profile.background);
 
@@ -16,9 +16,6 @@ TerminalSession::TerminalSession(const TerminalConfig::TerminalProfile &profile,
           &TerminalSession::titleChanged);
 }
 
-TerminalSession::~TerminalSession() {
-  delete m_buffer;
-}
 
 namespace {
 QStringList buildEnv(const TerminalConfig::TerminalProfile &profile) {
@@ -52,7 +49,7 @@ void TerminalSession::resize(int columns, int rows) {
 }
 
 TerminalBuffer *TerminalSession::buffer() const {
-  return m_buffer;
+  return m_buffer.get();
 }
 
 void TerminalSession::handlePtyData(const QByteArray &data) {

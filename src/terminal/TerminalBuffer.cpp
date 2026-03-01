@@ -141,10 +141,8 @@ void TerminalBuffer::backspace() {
 
 void TerminalBuffer::tab() {
   const int tabStop = 8;
-  int nextStop = ((m_cursorColumn / tabStop) + 1) * tabStop;
-  while (m_cursorColumn < nextStop && m_cursorColumn < m_columns) {
-    putChar(QLatin1Char(' '));
-  }
+  const int nextStop = ((m_cursorColumn / tabStop) + 1) * tabStop;
+  m_cursorColumn = qMin(nextStop, m_columns - 1);
 }
 
 void TerminalBuffer::setCursorPosition(int row, int column) {

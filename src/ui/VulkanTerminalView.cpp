@@ -9,6 +9,12 @@ VulkanTerminalView::VulkanTerminalView(TerminalSession *session,
 
   const auto profile = m_config->defaultProfile();
 
+  {
+    const QFontMetrics metrics(profile.font);
+    m_cellWidth  = qMax(1, metrics.horizontalAdvance(QLatin1Char('M')));
+    m_cellHeight = qMax(1, metrics.height());
+  }
+
   m_instance.setApiVersion(QVersionNumber(1, 2, 0));
   if (!m_instance.create()) {
     return;
@@ -20,6 +26,10 @@ VulkanTerminalView::VulkanTerminalView(TerminalSession *session,
 
   m_renderer = new VulkanRenderer();
   if (!m_renderer->initialize(&m_instance, m_window, profile, profile.font)) {
+    delete m_renderer;
+    m_renderer = nullptr;
+    delete m_window;
+    m_window = nullptr;
     return;
   }
   m_window->setRenderer(m_renderer);
@@ -75,10 +85,8 @@ void VulkanTerminalView::keyPressEvent(QKeyEvent *event) {
 
   if ((event->modifiers() & Qt::ControlModifier) &&
       (event->modifiers() & Qt::ShiftModifier)) {
-    if (event->key() == Qt::Key_V) {
-      pasteClipboard();
-      return;
-    }
+    if (event->key() == Qt::Key_C) { copySelection(); return; }
+    if (event->key() == Qt::Key_V) { pasteClipboard(); return; }
   }
 
   const QString text = event->text();
@@ -168,20 +176,16 @@ void VulkanTerminalView::updateFrame() {
 VulkanTerminalView::CellPos VulkanTerminalView::cellFromPoint(
     const QPoint &pos) const {
   CellPos cell;
-  const auto profile = m_config->defaultProfile();
-  QFontMetrics metrics(profile.font);
-  int cellWidth = qMax(1, metrics.horizontalAdvance(QLatin1Char('M')));
-  int cellHeight = qMax(1, metrics.height());
-  int column = qMax(0, pos.x() / cellWidth);
-  int row = qMax(0, pos.y() / cellHeight);
+  int column = qMax(0, pos.x() / m_cellWidth);
+  int row    = qMax(0, pos.y() / m_cellHeight);
 
   if (m_session && m_session->buffer()) {
     column = qBound(0, column, m_session->buffer()->columns() - 1);
-    row = qBound(0, row, m_session->buffer()->rows() - 1);
+    row    = qBound(0, row,    m_session->buffer()->rows() - 1);
   }
 
   cell.column = column;
-  cell.row = row;
+  cell.row    = row;
   return cell;
 }
 

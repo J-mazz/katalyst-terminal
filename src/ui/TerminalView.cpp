@@ -287,11 +287,12 @@ void TerminalView::clearSelection() {
 }
 
 TerminalView::CellPos TerminalView::cellFromPoint(const QPoint &pos) const {
+  if (!m_session || !m_session->buffer()) return {};
   CellPos cell;
   cell.column = qBound(0, pos.x() / m_cellWidth,
                        m_session->buffer()->columns() - 1);
-  cell.row = qBound(0, pos.y() / m_cellHeight,
-                    m_session->buffer()->rows() - 1);
+  cell.row    = qBound(0, pos.y() / m_cellHeight,
+                       m_session->buffer()->rows() - 1);
   return cell;
 }
 

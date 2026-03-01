@@ -20,5 +20,5 @@ build_output.txt
 *.orig
 *.rej
 *.class
-
+.cache/
 build*.txt
