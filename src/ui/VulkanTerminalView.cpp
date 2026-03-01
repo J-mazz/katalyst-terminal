@@ -30,22 +30,17 @@ VulkanTerminalView::VulkanTerminalView(TerminalSession *session,
   layout->setContentsMargins(0, 0, 0, 0);
   layout->addWidget(m_container);
 
-  connect(m_window, &VulkanTerminalWindow::keyInput, this,
-          &VulkanTerminalView::keyPressEvent);
-  connect(m_window, &VulkanTerminalWindow::mousePressed, this,
-          &VulkanTerminalView::mousePressEvent);
-  connect(m_window, &VulkanTerminalWindow::mouseMoved, this,
-          &VulkanTerminalView::mouseMoveEvent);
-  connect(m_window, &VulkanTerminalWindow::mouseReleased, this,
-          &VulkanTerminalView::mouseReleaseEvent);
-  connect(m_window, &VulkanTerminalWindow::wheelScrolled, this,
-          &VulkanTerminalView::wheelEvent);
-  connect(m_window, &VulkanTerminalWindow::windowFocused, this, [this]() {
-    emit focused(this);
-  });
+connectVulkanSignals();
+}
 
-  connect(m_session, &TerminalSession::screenUpdated, this,
-          &VulkanTerminalView::updateFrame);
+void VulkanTerminalView::connectVulkanSignals() {
+    connect(m_window, &VulkanTerminalWindow::keyInput,       this, &VulkanTerminalView::keyPressEvent);
+    connect(m_window, &VulkanTerminalWindow::mousePressed,   this, &VulkanTerminalView::mousePressEvent);
+    connect(m_window, &VulkanTerminalWindow::mouseMoved,     this, &VulkanTerminalView::mouseMoveEvent);
+    connect(m_window, &VulkanTerminalWindow::mouseReleased,  this, &VulkanTerminalView::mouseReleaseEvent);
+    connect(m_window, &VulkanTerminalWindow::wheelScrolled,  this, &VulkanTerminalView::wheelEvent);
+    connect(m_window, &VulkanTerminalWindow::windowFocused,  this, [this]() { emit focused(this); });
+    connect(m_session, &TerminalSession::screenUpdated,      this, &VulkanTerminalView::updateFrame);
 }
 
 void VulkanTerminalView::setSearchTerm(const QString &) {}
@@ -200,25 +195,28 @@ bool VulkanTerminalView::hasSelection() const {
          m_selectStart.column != m_selectEnd.column;
 }
 
-QString VulkanTerminalView::selectedText() const {
-  if (!m_session || !m_session->buffer() || !hasSelection()) {
-    return QString();
-  }
+bool VulkanTerminalView::isSelectionReversed(const CellPos &start, const CellPos &end) const {
+  return start.row > end.row || (start.row == end.row && start.column > end.column);
+}
 
-  QStringList lines = m_session->buffer()->snapshot(m_scrollOffset);
+QString VulkanTerminalView::selectedRow(const QStringList &lines, int row,
+                                         const CellPos &start, const CellPos &end) const {
+  const QString &line = lines[row];
+  const int startCol = (row == start.row) ? start.column : 0;
+  const int endCol   = (row == end.row)   ? end.column   : line.size();
+  return line.mid(startCol, endCol - startCol);
+}
+
+QString VulkanTerminalView::selectedText() const {
+  if (!m_session || !m_session->buffer() || !hasSelection()) return QString();
+
+  const QStringList lines = m_session->buffer()->snapshot(m_scrollOffset);
   CellPos start = m_selectStart;
   CellPos end = m_selectEnd;
-  if (start.row > end.row ||
-      (start.row == end.row && start.column > end.column)) {
-    qSwap(start, end);
-  }
+  if (isSelectionReversed(start, end)) qSwap(start, end);
 
   QStringList selected;
-  for (int row = start.row; row <= end.row && row < lines.size(); ++row) {
-    const QString &line = lines[row];
-    int startCol = (row == start.row) ? start.column : 0;
-    int endCol = (row == end.row) ? end.column : line.size();
-    selected.push_back(line.mid(startCol, endCol - startCol));
-  }
+  for (int row = start.row; row <= end.row && row < lines.size(); ++row)
+    selected.push_back(selectedRow(lines, row, start, end));
   return selected.join(QLatin1Char('\n'));
 }

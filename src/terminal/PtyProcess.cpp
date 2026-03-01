@@ -1,6 +1,27 @@
 #include "QtShim.h"
 import std;
 
+namespace {
+[[noreturn]] void execChild(const QString &program, const QStringList &args,
+                            const QStringList &env) {
+  for (const QString &entry : env) {
+    QByteArray bytes = entry.toLocal8Bit();
+    putenv(strdup(bytes.constData()));
+  }
+  QByteArray programBytes = program.toLocal8Bit();
+  QVector<QByteArray> argBytes;
+  argBytes.reserve(args.size() + 1);
+  argBytes.push_back(programBytes);
+  for (const QString &arg : args) argBytes.push_back(arg.toLocal8Bit());
+  QVector<char *> argv;
+  argv.reserve(argBytes.size() + 1);
+  for (QByteArray &b : argBytes) argv.push_back(b.data());
+  argv.push_back(nullptr);
+  execvp(programBytes.constData(), argv.data());
+  _exit(127);
+}
+}
+
 PtyProcess::PtyProcess(QObject *parent) : QObject(parent) {}
 
 PtyProcess::~PtyProcess() {
@@ -9,48 +30,18 @@ PtyProcess::~PtyProcess() {
 
 bool PtyProcess::start(const QString &program, const QStringList &args,
                        const QStringList &env) {
-  if (m_masterFd >= 0) {
-    return false;
-  }
+  if (m_masterFd >= 0) return false;
 
   struct winsize win = {};
   win.ws_col = 80;
   win.ws_row = 24;
 
   m_childPid = forkpty(&m_masterFd, nullptr, nullptr, &win);
-  if (m_childPid == 0) {
-    for (const QString &entry : env) {
-      QByteArray bytes = entry.toLocal8Bit();
-      putenv(strdup(bytes.constData()));
-    }
-
-    QByteArray programBytes = program.toLocal8Bit();
-    QVector<QByteArray> argBytes;
-    argBytes.reserve(args.size() + 1);
-    argBytes.push_back(programBytes);
-    for (const QString &arg : args) {
-      argBytes.push_back(arg.toLocal8Bit());
-    }
-
-    QVector<char *> argv;
-    argv.reserve(argBytes.size() + 1);
-    for (QByteArray &arg : argBytes) {
-      argv.push_back(arg.data());
-    }
-    argv.push_back(nullptr);
-
-    execvp(programBytes.constData(), argv.data());
-    _exit(127);
-  }
-
-  if (m_childPid < 0) {
-    closeMaster();
-    return false;
-  }
+  if (m_childPid == 0) execChild(program, args, env);
+  if (m_childPid < 0) { closeMaster(); return false; }
 
   m_notifier = new QSocketNotifier(m_masterFd, QSocketNotifier::Read, this);
-  connect(m_notifier, &QSocketNotifier::activated, this,
-          &PtyProcess::handleReadyRead);
+  connect(m_notifier, &QSocketNotifier::activated, this, &PtyProcess::handleReadyRead);
   return true;
 }
 

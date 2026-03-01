@@ -19,37 +19,32 @@ export enum class SgrAction {
   Unknown,
 };
 
-export constexpr SgrAction classifySgrParam(int param) {
-  if (param <= 0) {
-    return SgrAction::Reset;
-  }
-
+constexpr SgrAction classifyOnParam(int param) {
   switch (param) {
-    case 1:
-      return SgrAction::BoldOn;
-    case 3:
-      return SgrAction::ItalicOn;
-    case 4:
-      return SgrAction::UnderlineOn;
-    case 7:
-      return SgrAction::InverseOn;
-    case 9:
-      return SgrAction::StrikeOn;
-    case 22:
-      return SgrAction::BoldOff;
-    case 23:
-      return SgrAction::ItalicOff;
-    case 24:
-      return SgrAction::UnderlineOff;
-    case 27:
-      return SgrAction::InverseOff;
-    case 29:
-      return SgrAction::StrikeOff;
-    case 39:
-      return SgrAction::FgDefault;
-    case 49:
-      return SgrAction::BgDefault;
-    default:
-      return SgrAction::Unknown;
+    case 1: return SgrAction::BoldOn;
+    case 3: return SgrAction::ItalicOn;
+    case 4: return SgrAction::UnderlineOn;
+    case 7: return SgrAction::InverseOn;
+    case 9: return SgrAction::StrikeOn;
+    default: return SgrAction::Unknown;
   }
+}
+
+constexpr SgrAction classifyOffParam(int param) {
+  switch (param) {
+    case 22: return SgrAction::BoldOff;
+    case 23: return SgrAction::ItalicOff;
+    case 24: return SgrAction::UnderlineOff;
+    case 27: return SgrAction::InverseOff;
+    case 29: return SgrAction::StrikeOff;
+    case 39: return SgrAction::FgDefault;
+    case 49: return SgrAction::BgDefault;
+    default: return SgrAction::Unknown;
+  }
+}
+
+export constexpr SgrAction classifySgrParam(int param) {
+  if (param <= 0)  return SgrAction::Reset;
+  if (param <= 9)  return classifyOnParam(param);
+  return classifyOffParam(param);
 }

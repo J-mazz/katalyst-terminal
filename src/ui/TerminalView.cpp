@@ -107,29 +107,36 @@ void TerminalView::paintRowSelection(QPainter &painter, int row, int cols) {
   painter.fillRect(QRect(startCol * m_cellWidth, row * m_cellHeight, width, m_cellHeight), m_selection);
 }
 
+void TerminalView::setCellFont(QPainter &painter, const TerminalBuffer::Cell &cell) const {
+  QFont cellFont = m_font;
+  if (cell.bold)   cellFont.setBold(true);
+  if (cell.italic) cellFont.setItalic(true);
+  painter.setFont(cellFont);
+}
+
+void TerminalView::drawCellGlyph(QPainter &painter, const TerminalBuffer::Cell &cell, int x, int y) const {
+  if (cell.ch == QLatin1Char(' ')) return;
+  painter.setPen(cell.fg);
+  painter.drawText(x, y, QString(cell.ch));
+}
+
+void TerminalView::drawCellDecorations(QPainter &painter, const TerminalBuffer::Cell &cell, int x, int row) const {
+  if (!cell.underline && !cell.strikethrough) return;
+  painter.setPen(cell.fg);
+  if (cell.underline)
+    painter.drawLine(x, row * m_cellHeight + m_cellHeight - 2, x + m_cellWidth, row * m_cellHeight + m_cellHeight - 2);
+  if (cell.strikethrough)
+    painter.drawLine(x, row * m_cellHeight + m_cellHeight / 2, x + m_cellWidth, row * m_cellHeight + m_cellHeight / 2);
+}
+
 void TerminalView::paintRowText(QPainter &painter, const TerminalBuffer *buffer, int row, int cols, int y) {
   for (int col = 0; col < cols; ++col) {
     const TerminalBuffer::Cell cell = buffer->cellAtVisible(row, col, m_scrollOffset);
     if (isCellVisuallyEmpty(cell)) continue;
-    int x = col * m_cellWidth;
-
-    QFont cellFont = m_font;
-    if (cell.bold)   cellFont.setBold(true);
-    if (cell.italic) cellFont.setItalic(true);
-    painter.setFont(cellFont);
-
-    if (cell.ch != QLatin1Char(' ')) {
-      painter.setPen(cell.fg);
-      painter.drawText(x, y, QString(cell.ch));
-    }
-    if (cell.underline) {
-      painter.setPen(cell.fg);
-      painter.drawLine(x, row * m_cellHeight + m_cellHeight - 2, x + m_cellWidth, row * m_cellHeight + m_cellHeight - 2);
-    }
-    if (cell.strikethrough) {
-      painter.setPen(cell.fg);
-      painter.drawLine(x, row * m_cellHeight + m_cellHeight / 2, x + m_cellWidth, row * m_cellHeight + m_cellHeight / 2);
-    }
+    const int x = col * m_cellWidth;
+    setCellFont(painter, cell);
+    drawCellGlyph(painter, cell, x, y);
+    drawCellDecorations(painter, cell, x, row);
   }
 }
 
@@ -166,26 +173,17 @@ void TerminalView::resizeEvent(QResizeEvent *) {
 }
 
 void TerminalView::keyPressEvent(QKeyEvent *event) {
-  if (!m_session) {
-    return;
+  if (!m_session) return;
+
+  const bool ctrlShift = (event->modifiers() & Qt::ControlModifier) &&
+                         (event->modifiers() & Qt::ShiftModifier);
+  if (ctrlShift) {
+    if (event->key() == Qt::Key_C) { copySelection(); return; }
+    if (event->key() == Qt::Key_V) { pasteClipboard(); return; }
   }
 
-  if ((event->modifiers() & Qt::ControlModifier) &&
-      (event->modifiers() & Qt::ShiftModifier)) {
-    if (event->key() == Qt::Key_C) {
-      copySelection();
-      return;
-    }
-    if (event->key() == Qt::Key_V) {
-      pasteClipboard();
-      return;
-    }
-  }
-
-  QByteArray sequence = keyToSequence(event);
-  if (!sequence.isEmpty()) {
-    m_session->sendInput(sequence);
-  }
+  const QByteArray sequence = keyToSequence(event);
+  if (!sequence.isEmpty()) m_session->sendInput(sequence);
 }
 
 void TerminalView::inputMethodEvent(QInputMethodEvent *event) {
@@ -258,22 +256,27 @@ bool TerminalView::hasSelection() const {
          m_selectStart.column != m_selectEnd.column;
 }
 
+QString TerminalView::rowSelectedText(const TerminalBuffer *buffer, int row,
+                                       const CellPos &start, const CellPos &end) const {
+    const int baseIndex = buffer->totalLines() - buffer->rows() - m_scrollOffset;
+    const QString line = buffer->lineAt(baseIndex + row);
+    const int startCol = (row == start.row) ? start.column : 0;
+    const int endCol   = (row == end.row)   ? end.column   : line.size();
+    return line.mid(startCol, endCol - startCol);
+}
+
 QString TerminalView::selectedText() const {
-  if (!hasSelection() || !m_session || !m_session->buffer()) return QString();
+    if (!hasSelection() || !m_session || !m_session->buffer()) return QString();
 
-  const TerminalBuffer *buffer = m_session->buffer();
-  CellPos start = m_selectStart;
-  CellPos end = m_selectEnd;
-  if (isSelectionReversed(start, end)) qSwap(start, end);
+    const TerminalBuffer *buffer = m_session->buffer();
+    CellPos start = m_selectStart;
+    CellPos end = m_selectEnd;
+    if (isSelectionReversed(start, end)) qSwap(start, end);
 
-  const int rows = buffer->rows();
-  QStringList selected;
-  for (int row = start.row; row <= end.row && row < rows; ++row) {
-    const QString line = buffer->lineAt(buffer->totalLines() - rows - m_scrollOffset + row);
-    int startCol = (row == start.row) ? start.column : 0;
-    int endCol   = (row == end.row)   ? end.column   : line.size();
-    selected.push_back(line.mid(startCol, endCol - startCol));
-  }
+    const int rows = buffer->rows();
+    QStringList selected;
+    for (int row = start.row; row <= end.row && row < rows; ++row)
+        selected.push_back(rowSelectedText(buffer, row, start, end));
   return selected.join(QLatin1Char('\n'));
 }
 

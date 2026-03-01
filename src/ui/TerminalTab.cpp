@@ -14,22 +14,8 @@ TerminalViewBase *TerminalTab::activeView() const {
   return m_activeView;
 }
 
-void TerminalTab::split(Qt::Orientation orientation) {
-  if (!m_activeView) {
-    return;
-  }
-
-  TerminalViewBase *newView = createView();
-  QSplitter *parentSplitter = splitterForView(m_activeView);
-
-  if (parentSplitter && parentSplitter->orientation() == orientation) {
-    int index = parentSplitter->indexOf(m_activeView);
-    parentSplitter->insertWidget(index + 1, newView);
-    setActiveView(newView);
-    return;
-  }
-
-  auto *splitter = new QSplitter(orientation, this);
+void TerminalTab::insertNewSplitter(QSplitter *splitter, TerminalViewBase *newView,
+                                    QSplitter *parentSplitter) {
   if (parentSplitter) {
     int index = parentSplitter->indexOf(m_activeView);
     m_activeView->setParent(splitter);
@@ -44,7 +30,23 @@ void TerminalTab::split(Qt::Orientation orientation) {
     m_root = splitter;
     layout()->addWidget(m_root);
   }
+}
 
+void TerminalTab::split(Qt::Orientation orientation) {
+  if (!m_activeView) return;
+
+  TerminalViewBase *newView = createView();
+  QSplitter *parentSplitter = splitterForView(m_activeView);
+
+  if (parentSplitter && parentSplitter->orientation() == orientation) {
+    int index = parentSplitter->indexOf(m_activeView);
+    parentSplitter->insertWidget(index + 1, newView);
+    setActiveView(newView);
+    return;
+  }
+
+  auto *splitter = new QSplitter(orientation, this);
+  insertNewSplitter(splitter, newView, parentSplitter);
   setActiveView(newView);
 }
 
@@ -130,25 +132,10 @@ void TerminalTab::setActiveView(TerminalViewBase *view) {
   emit activeViewChanged(view);
 }
 
-void TerminalTab::cleanupSplitter(QSplitter *splitter) {
-  if (!splitter) {
-    return;
-  }
-
-  if (splitter->count() > 1) {
-    if (!m_activeView && !m_views.isEmpty()) {
-      setActiveView(m_views.first());
-    }
-    return;
-  }
-
-  QWidget *remaining = splitter->widget(0);
-  QSplitter *parentSplitter = qobject_cast<QSplitter *>(splitter->parentWidget());
-  int parentIndex = parentSplitter ? parentSplitter->indexOf(splitter) : -1;
-
+void TerminalTab::replaceSplitterWithChild(QSplitter *splitter, QWidget *remaining,
+                                           QSplitter *parentSplitter, int parentIndex) {
   remaining->setParent(nullptr);
   splitter->deleteLater();
-
   if (parentSplitter) {
     parentSplitter->insertWidget(parentIndex, remaining);
   } else {
@@ -156,11 +143,24 @@ void TerminalTab::cleanupSplitter(QSplitter *splitter) {
     m_root = remaining;
     layout()->addWidget(m_root);
   }
+}
+
+void TerminalTab::cleanupSplitter(QSplitter *splitter) {
+  if (!splitter) return;
+
+  if (splitter->count() > 1) {
+    if (!m_activeView && !m_views.isEmpty()) setActiveView(m_views.first());
+    return;
+  }
+
+  QWidget *remaining = splitter->widget(0);
+  QSplitter *parentSplitter = qobject_cast<QSplitter *>(splitter->parentWidget());
+  int parentIndex = parentSplitter ? parentSplitter->indexOf(splitter) : -1;
+
+  replaceSplitterWithChild(splitter, remaining, parentSplitter, parentIndex);
 
   TerminalViewBase *nextView = findFirstView(remaining);
-  if (nextView) {
-    setActiveView(nextView);
-  }
+  if (nextView) setActiveView(nextView);
 }
 
 TerminalViewBase *TerminalTab::findFirstView(QWidget *root) const {

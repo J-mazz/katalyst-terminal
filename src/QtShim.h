@@ -179,6 +179,8 @@ public:
 	QStringList snapshot(int scrollOffset) const;
 
 private:
+	bool findForward(const QString &term, int startLine, int startColumn, int total, Match *match) const;
+	bool findBackward(const QString &term, int startLine, int startColumn, int total, Match *match) const;
 	QVector<Cell> blankRow(const QColor &fg, const QColor &bg) const;
 	void ensureScreenSize();
 	void clampCursor();
@@ -370,9 +372,12 @@ private:
 	void paintRowBackgrounds(QPainter &painter, const TerminalBuffer *buffer, int row, int cols);
 	void paintRowSelection(QPainter &painter, int row, int cols);
 	void paintRowText(QPainter &painter, const TerminalBuffer *buffer, int row, int cols, int y);
-	bool isSelectionReversed(const CellPos &start, const CellPos &end) const;
-	static bool isCellVisuallyEmpty(const TerminalBuffer::Cell &cell);
-
+    void setCellFont(QPainter &painter, const TerminalBuffer::Cell &cell) const;
+    void drawCellGlyph(QPainter &painter, const TerminalBuffer::Cell &cell, int x, int y) const;
+    void drawCellDecorations(QPainter &painter, const TerminalBuffer::Cell &cell, int x, int row) const;
+    bool isSelectionReversed(const CellPos &start, const CellPos &end) const;
+    static bool isCellVisuallyEmpty(const TerminalBuffer::Cell &cell);
+    QString rowSelectedText(const TerminalBuffer *buffer, int row, const CellPos &start, const CellPos &end) const;
 	TerminalSession *m_session = nullptr;
 	TerminalConfig *m_config = nullptr;
 
@@ -622,6 +627,7 @@ protected:
 
 private:
 	void updateFrame();
+	void connectVulkanSignals();
 	struct CellPos {
 		int row = 0;
 		int column = 0;
@@ -630,6 +636,8 @@ private:
 	void updateSelection(const QPoint &pos);
 	bool hasSelection() const;
 	QString selectedText() const;
+	bool isSelectionReversed(const CellPos &start, const CellPos &end) const;
+	QString selectedRow(const QStringList &lines, int row, const CellPos &start, const CellPos &end) const;
 
 	TerminalSession *m_session = nullptr;
 	TerminalConfig *m_config = nullptr;
@@ -669,6 +677,8 @@ private:
 	void setActiveView(TerminalViewBase *view);
 	QSplitter *splitterForView(TerminalViewBase *view) const;
 	void cleanupSplitter(QSplitter *splitter);
+	void insertNewSplitter(QSplitter *splitter, TerminalViewBase *newView, QSplitter *parentSplitter);
+	void replaceSplitterWithChild(QSplitter *splitter, QWidget *remaining, QSplitter *parentSplitter, int parentIndex);
 	TerminalViewBase *findFirstView(QWidget *root) const;
 
 	TerminalConfig *m_config = nullptr;
@@ -690,6 +700,8 @@ private:
 	void setupUi();
 	void setupActions();
 	void configureShortcuts();
+	void loadSavedShortcuts();
+	void connectTabSignals(TerminalTab *tab);
 	TerminalTab *currentTab() const;
 	TerminalViewBase *activeView() const;
 

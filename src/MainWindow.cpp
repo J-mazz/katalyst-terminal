@@ -116,6 +116,10 @@ void MainWindow::setupActions() {
   connect(shortcutAction, &QAction::triggered, this,
           &MainWindow::configureShortcuts);
 
+  loadSavedShortcuts();
+}
+
+void MainWindow::loadSavedShortcuts() {
   KConfig config(QStringLiteral("katalyst-terminalrc"));
   KConfigGroup shortcuts(&config, QStringLiteral("Shortcuts"));
   auto applyShortcut = [&shortcuts](QAction *action, const QString &key,
@@ -126,19 +130,13 @@ void MainWindow::setupActions() {
         value, QKeySequence::PortableText));
   };
 
-  applyShortcut(m_newTabAction, QStringLiteral("NewTab"),
-                m_newTabAction->shortcut());
-  applyShortcut(m_closeTabAction, QStringLiteral("CloseTab"),
-                m_closeTabAction->shortcut());
-  applyShortcut(m_splitHorizontalAction, QStringLiteral("SplitHorizontal"),
-                m_splitHorizontalAction->shortcut());
-  applyShortcut(m_splitVerticalAction, QStringLiteral("SplitVertical"),
-                m_splitVerticalAction->shortcut());
-  applyShortcut(m_closeSplitAction, QStringLiteral("CloseSplit"),
-                m_closeSplitAction->shortcut());
-  applyShortcut(m_copyAction, QStringLiteral("Copy"), m_copyAction->shortcut());
-  applyShortcut(m_pasteAction, QStringLiteral("Paste"),
-                m_pasteAction->shortcut());
+  applyShortcut(m_newTabAction,           QStringLiteral("NewTab"),           m_newTabAction->shortcut());
+  applyShortcut(m_closeTabAction,         QStringLiteral("CloseTab"),         m_closeTabAction->shortcut());
+  applyShortcut(m_splitHorizontalAction,  QStringLiteral("SplitHorizontal"),  m_splitHorizontalAction->shortcut());
+  applyShortcut(m_splitVerticalAction,    QStringLiteral("SplitVertical"),    m_splitVerticalAction->shortcut());
+  applyShortcut(m_closeSplitAction,       QStringLiteral("CloseSplit"),       m_closeSplitAction->shortcut());
+  applyShortcut(m_copyAction,             QStringLiteral("Copy"),             m_copyAction->shortcut());
+  applyShortcut(m_pasteAction,            QStringLiteral("Paste"),            m_pasteAction->shortcut());
 }
 
 TerminalTab *MainWindow::currentTab() const {
@@ -150,21 +148,21 @@ TerminalViewBase *MainWindow::activeView() const {
   return tab ? tab->activeView() : nullptr;
 }
 
-void MainWindow::newTab() {
-  auto *tab = new TerminalTab(m_config, this);
-  int index = m_tabs->addTab(tab, tab->tabTitle());
-  m_tabs->setCurrentIndex(index);
-
-  connect(tab, &TerminalTab::activeViewChanged, this,
-          [this](TerminalViewBase *) {
+void MainWindow::connectTabSignals(TerminalTab *tab) {
+  connect(tab, &TerminalTab::activeViewChanged, this, [this](TerminalViewBase *) {
     updateTabTitle(m_tabs->currentIndex());
   });
   connect(tab, &TerminalTab::titleChanged, this, [this, tab]() {
     int idx = m_tabs->indexOf(tab);
-    if (idx >= 0) {
-      m_tabs->setTabText(idx, tab->tabTitle());
-    }
+    if (idx >= 0) m_tabs->setTabText(idx, tab->tabTitle());
   });
+}
+
+void MainWindow::newTab() {
+  auto *tab = new TerminalTab(m_config, this);
+  int index = m_tabs->addTab(tab, tab->tabTitle());
+  m_tabs->setCurrentIndex(index);
+  connectTabSignals(tab);
 }
 
 void MainWindow::closeTab() {

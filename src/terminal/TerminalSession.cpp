@@ -20,28 +20,25 @@ TerminalSession::~TerminalSession() {
   delete m_buffer;
 }
 
-void TerminalSession::startShell() {
-  QString program = m_profile.program;
-  if (program.isEmpty()) {
-    program = QString::fromLocal8Bit(qgetenv("SHELL"));
-  }
-  if (program.isEmpty()) {
-    program = QStringLiteral("/bin/bash");
-  }
-
+namespace {
+QStringList buildEnv(const TerminalConfig::TerminalProfile &profile) {
   QStringList env;
   const QProcessEnvironment systemEnv = QProcessEnvironment::systemEnvironment();
-  for (const QString &key : systemEnv.keys()) {
+  for (const QString &key : systemEnv.keys())
     env.push_back(key + QLatin1Char('=') + systemEnv.value(key));
-  }
-  for (const QString &entry : m_profile.env) {
+  for (const QString &entry : profile.env)
     env.push_back(entry);
-  }
-  if (!m_profile.term.isEmpty()) {
-    env.push_back(QStringLiteral("TERM=") + m_profile.term);
-  }
+  if (!profile.term.isEmpty())
+    env.push_back(QStringLiteral("TERM=") + profile.term);
+  return env;
+}
+}
 
-  m_pty->start(program, m_profile.arguments, env);
+void TerminalSession::startShell() {
+  QString program = m_profile.program;
+  if (program.isEmpty()) program = QString::fromLocal8Bit(qgetenv("SHELL"));
+  if (program.isEmpty()) program = QStringLiteral("/bin/bash");
+  m_pty->start(program, m_profile.arguments, buildEnv(m_profile));
 }
 
 void TerminalSession::sendInput(const QByteArray &data) {

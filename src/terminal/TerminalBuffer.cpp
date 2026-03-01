@@ -203,55 +203,40 @@ TerminalBuffer::Cell TerminalBuffer::cellAtVisible(int row, int column,
   return cellAt(start + row, column);
 }
 
-bool TerminalBuffer::findNext(const QString &term, int startLine,
-                              int startColumn, bool forward,
-                              Match *match) const {
-  if (!match) {
-    return false;
+bool TerminalBuffer::findForward(const QString &term, int startLine,
+                                  int startColumn, int total,
+                                  Match *match) const {
+  for (int line = qMax(0, startLine); line < total; ++line) {
+    const QString current = lineAt(line);
+    const int start = (line == startLine) ? qMax(0, startColumn) : 0;
+    const int found = current.indexOf(term, start, Qt::CaseInsensitive);
+    if (found >= 0) { match->line = line; match->column = found; return true; }
   }
+  return false;
+}
+
+bool TerminalBuffer::findBackward(const QString &term, int startLine,
+                                   int startColumn, int total,
+                                   Match *match) const {
+  for (int line = qMin(startLine, total - 1); line >= 0; --line) {
+    const QString current = lineAt(line);
+    const int start = (line == startLine) ? qBound(0, startColumn, current.size()) : current.size();
+    const int found = current.lastIndexOf(term, start, Qt::CaseInsensitive);
+    if (found >= 0) { match->line = line; match->column = found; return true; }
+  }
+  return false;
+}
+
+bool TerminalBuffer::findNext(const QString &term, int startLine,
+                               int startColumn, bool forward,
+                               Match *match) const {
+  if (!match || term.isEmpty()) return false;
   match->line = -1;
   match->column = -1;
-  if (term.isEmpty()) {
-    return false;
-  }
-
   const int total = totalLines();
-  if (total <= 0) {
-    return false;
-  }
-
-  if (forward) {
-    int lineIndex = qMax(0, startLine);
-    int columnIndex = qMax(0, startColumn);
-    for (int line = lineIndex; line < total; ++line) {
-      const QString current = lineAt(line);
-      int start = (line == lineIndex) ? columnIndex : 0;
-      int found = current.indexOf(term, start, Qt::CaseInsensitive);
-      if (found >= 0) {
-        match->line = line;
-        match->column = found;
-        return true;
-      }
-    }
-  } else {
-    int lineIndex = qMin(startLine, total - 1);
-    int columnIndex = qMax(0, startColumn);
-    for (int line = lineIndex; line >= 0; --line) {
-      const QString current = lineAt(line);
-      int start = current.size();
-      if (line == lineIndex) {
-        start = qBound(0, columnIndex, current.size());
-      }
-      int found = current.lastIndexOf(term, start, Qt::CaseInsensitive);
-      if (found >= 0) {
-        match->line = line;
-        match->column = found;
-        return true;
-      }
-    }
-  }
-
-  return false;
+  if (total <= 0) return false;
+  return forward ? findForward(term, startLine, startColumn, total, match)
+                 : findBackward(term, startLine, startColumn, total, match);
 }
 
 QStringList TerminalBuffer::snapshot(int scrollOffset) const {
