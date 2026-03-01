@@ -8,6 +8,65 @@ struct SwapchainSupport {
   QVector<VkPresentModeKHR> presentModes;
 };
 
+VkSurfaceFormatKHR chooseSwapSurfaceFormat(const QVector<VkSurfaceFormatKHR>& availableFormats) {
+  for (const auto& availableFormat : availableFormats) {
+    if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
+        availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+      return availableFormat;
+    }
+  }
+  return availableFormats.first();
+}
+
+VkPresentModeKHR chooseSwapPresentMode(const QVector<VkPresentModeKHR>& availablePresentModes) {
+  for (const auto& availablePresentMode : availablePresentModes) {
+    if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+      return availablePresentMode;
+    }
+  }
+  return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, QWindow* window) {
+  if (capabilities.currentExtent.width != UINT32_MAX) {
+    return capabilities.currentExtent;
+  }
+  
+  VkExtent2D actualExtent = {
+    static_cast<uint32_t>(std::max(1, window->width())),
+    static_cast<uint32_t>(std::max(1, window->height()))
+  };
+  
+  actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+  actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+  
+  return actualExtent;
+}
+
+SwapchainSupport querySwapchainSupport(VkPhysicalDevice device, VkSurfaceKHR surface) {
+  SwapchainSupport details;
+
+  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+
+  uint32_t formatCount;
+  vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+
+  if (formatCount != 0) {
+    details.formats.resize(formatCount);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+  }
+
+  uint32_t presentModeCount;
+  vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+
+  if (presentModeCount != 0) {
+    details.presentModes.resize(presentModeCount);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+  }
+
+  return details;
+}
+
 QByteArray loadShaderBytes(const QString &path) {
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) {
@@ -49,42 +108,40 @@ bool VulkanRenderer::initialize(QVulkanInstance *instance, QWindow *window,
 
   buildGlyphAtlas(font);
 
-  if (!createDevice()) {
-    return false;
-  }
-  if (!createSwapchain()) {
-    return false;
-  }
-  if (!createRenderPass()) {
-    return false;
-  }
-  if (!createPipeline()) {
-    return false;
-  }
-  if (!createFramebuffers()) {
-    return false;
-  }
-  if (!createCommandPool()) {
-    return false;
-  }
-  if (!createBuffers()) {
-    return false;
-  }
-  if (!createAtlas()) {
-    return false;
-  }
-  if (!createDescriptorSet()) {
-    return false;
-  }
-  if (!createCommandBuffers()) {
-    return false;
-  }
-  if (!createSyncObjects()) {
+  if (!createDevice() || !createSwapchain() || !createRenderPass() ||
+      !createPipeline() || !createFramebuffers() || !createCommandPool() ||
+      !createBuffers() || !createAtlas() || !createDescriptorSet() ||
+      !createCommandBuffers() || !createSyncObjects()) {
     return false;
   }
 
   m_ready = true;
   return true;
+}
+
+void VulkanRenderer::cleanupAtlas() {
+  if (m_atlasSampler) vkDestroySampler(m_device, m_atlasSampler, nullptr);
+  if (m_atlasView) vkDestroyImageView(m_device, m_atlasView, nullptr);
+  if (m_atlasImage) vkDestroyImage(m_device, m_atlasImage, nullptr);
+  if (m_atlasMemory) vkFreeMemory(m_device, m_atlasMemory, nullptr);
+}
+
+void VulkanRenderer::cleanupDescriptors() {
+  if (m_descriptorPool) vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+  if (m_descriptorSetLayout) vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
+}
+
+void VulkanRenderer::cleanupBuffers() {
+  if (m_instanceBuffer) vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
+  if (m_instanceMemory) vkFreeMemory(m_device, m_instanceMemory, nullptr);
+  if (m_vertexBuffer) vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
+  if (m_vertexMemory) vkFreeMemory(m_device, m_vertexMemory, nullptr);
+}
+
+void VulkanRenderer::cleanupSyncObjects() {
+  if (m_renderFinished) vkDestroySemaphore(m_device, m_renderFinished, nullptr);
+  if (m_imageAvailable) vkDestroySemaphore(m_device, m_imageAvailable, nullptr);
+  if (m_inFlight) vkDestroyFence(m_device, m_inFlight, nullptr);
 }
 
 void VulkanRenderer::cleanup() {
@@ -95,53 +152,15 @@ void VulkanRenderer::cleanup() {
   vkDeviceWaitIdle(m_device);
 
   cleanupSwapchain();
-
-  if (m_atlasSampler) {
-    vkDestroySampler(m_device, m_atlasSampler, nullptr);
-  }
-  if (m_atlasView) {
-    vkDestroyImageView(m_device, m_atlasView, nullptr);
-  }
-  if (m_atlasImage) {
-    vkDestroyImage(m_device, m_atlasImage, nullptr);
-  }
-  if (m_atlasMemory) {
-    vkFreeMemory(m_device, m_atlasMemory, nullptr);
-  }
-
-  if (m_descriptorPool) {
-    vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-  }
-  if (m_descriptorSetLayout) {
-    vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
-  }
-
-  if (m_instanceBuffer) {
-    vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
-  }
-  if (m_instanceMemory) {
-    vkFreeMemory(m_device, m_instanceMemory, nullptr);
-  }
-  if (m_vertexBuffer) {
-    vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
-  }
-  if (m_vertexMemory) {
-    vkFreeMemory(m_device, m_vertexMemory, nullptr);
-  }
+  cleanupAtlas();
+  cleanupDescriptors();
+  cleanupBuffers();
 
   if (m_commandPool) {
     vkDestroyCommandPool(m_device, m_commandPool, nullptr);
   }
 
-  if (m_renderFinished) {
-    vkDestroySemaphore(m_device, m_renderFinished, nullptr);
-  }
-  if (m_imageAvailable) {
-    vkDestroySemaphore(m_device, m_imageAvailable, nullptr);
-  }
-  if (m_inFlight) {
-    vkDestroyFence(m_device, m_inFlight, nullptr);
-  }
+  cleanupSyncObjects();
 
   vkDestroyDevice(m_device, nullptr);
   m_device = VK_NULL_HANDLE;
@@ -170,6 +189,99 @@ void VulkanRenderer::resize(int width, int height) {
   createCommandBuffers();
 }
 
+void VulkanRenderer::normalizeSelection(Selection &selection) {
+  if (selection.active) {
+    if (selection.startRow > selection.endRow ||
+        (selection.startRow == selection.endRow &&
+         selection.startCol > selection.endCol)) {
+      std::swap(selection.startRow, selection.endRow);
+      std::swap(selection.startCol, selection.endCol);
+    }
+  }
+}
+
+uint VulkanRenderer::getGlyphKey(uint codepoint, bool bold) {
+  uint glyphKey = codepoint;
+  if (bold) {
+    glyphKey = codepoint | 0x80000000u;
+    if (!m_glyphs.contains(glyphKey)) {
+      if (!rasterizeGlyph(codepoint, true)) {
+        glyphKey = codepoint;
+      }
+    }
+  }
+  if (!m_glyphs.contains(glyphKey)) {
+    if (!rasterizeGlyph(codepoint, false)) {
+      glyphKey = QLatin1Char(' ').unicode();
+    }
+  }
+  return glyphKey;
+}
+
+bool VulkanRenderer::isCellSelected(int row, int col, const Selection &sel) const {
+  if (!sel.active) return false;
+
+  bool inRange = false;
+  if (row > sel.startRow && row < sel.endRow) {
+    inRange = true;
+  } else if (row == sel.startRow && row == sel.endRow) {
+    inRange = (col >= sel.startCol && col < sel.endCol);
+  } else if (row == sel.startRow) {
+    inRange = (col >= sel.startCol);
+  } else if (row == sel.endRow) {
+    inRange = (col < sel.endCol);
+  }
+  return inRange;
+}
+
+void VulkanRenderer::addDecorationInstances(const TerminalBuffer::Cell &cell,
+                                            const TerminalQuadInstance &baseInstance,
+                                            const QColor &fg) {
+  if (cell.underline) {
+    const GlyphInfo spaceGlyph = m_glyphs.value(QLatin1Char(' ').unicode());
+    TerminalQuadInstance underline{};
+    underline.posX = baseInstance.posX;
+    underline.posY = baseInstance.posY + baseInstance.sizeY - 2.0f;
+    underline.sizeX = baseInstance.sizeX;
+    underline.sizeY = 1.0f;
+    underline.uvMinX = spaceGlyph.uvMinX;
+    underline.uvMinY = spaceGlyph.uvMinY;
+    underline.uvMaxX = spaceGlyph.uvMaxX;
+    underline.uvMaxY = spaceGlyph.uvMaxY;
+    underline.fgR = fg.redF();
+    underline.fgG = fg.greenF();
+    underline.fgB = fg.blueF();
+    underline.fgA = 1.0f;
+    underline.bgR = fg.redF();
+    underline.bgG = fg.greenF();
+    underline.bgB = fg.blueF();
+    underline.bgA = 1.0f;
+    m_instances.push_back(underline);
+  }
+
+  if (cell.strikethrough) {
+    const GlyphInfo spaceGlyph = m_glyphs.value(QLatin1Char(' ').unicode());
+    TerminalQuadInstance strike{};
+    strike.posX = baseInstance.posX;
+    strike.posY = baseInstance.posY + baseInstance.sizeY * 0.5f;
+    strike.sizeX = baseInstance.sizeX;
+    strike.sizeY = 1.0f;
+    strike.uvMinX = spaceGlyph.uvMinX;
+    strike.uvMinY = spaceGlyph.uvMinY;
+    strike.uvMaxX = spaceGlyph.uvMaxX;
+    strike.uvMaxY = spaceGlyph.uvMaxY;
+    strike.fgR = fg.redF();
+    strike.fgG = fg.greenF();
+    strike.fgB = fg.blueF();
+    strike.fgA = 1.0f;
+    strike.bgR = fg.redF();
+    strike.bgG = fg.greenF();
+    strike.bgB = fg.blueF();
+    strike.bgA = 1.0f;
+    m_instances.push_back(strike);
+  }
+}
+
 void VulkanRenderer::updateFromBuffer(const TerminalBuffer *buffer,
                                       int scrollOffset,
                                       const Selection &selection) {
@@ -177,46 +289,28 @@ void VulkanRenderer::updateFromBuffer(const TerminalBuffer *buffer,
     return;
   }
 
-  const QStringList lines = buffer->snapshot(scrollOffset);
+  const int rows = buffer->rows();
+  const int cols = buffer->columns();
+
   m_instances.clear();
-  m_instances.reserve(lines.size() * buffer->columns());
+  m_instances.reserve(rows * cols);
 
   Selection normalized = selection;
-  if (normalized.active) {
-    if (normalized.startRow > normalized.endRow ||
-        (normalized.startRow == normalized.endRow &&
-         normalized.startCol > normalized.endCol)) {
-      std::swap(normalized.startRow, normalized.endRow);
-      std::swap(normalized.startCol, normalized.endCol);
-    }
-  }
+  normalizeSelection(normalized);
 
   const bool cursorVisible = (scrollOffset == 0);
   const int cursorRow = buffer->cursorRow();
   const int cursorCol = buffer->cursorColumn();
 
-  for (int row = 0; row < lines.size(); ++row) {
-    for (int col = 0; col < buffer->columns(); ++col) {
+  for (int row = 0; row < rows; ++row) {
+    for (int col = 0; col < cols; ++col) {
       const TerminalBuffer::Cell cell =
           buffer->cellAtVisible(row, col, scrollOffset);
       QChar ch = cell.ch;
       uint codepoint = ch.unicode();
 
-      // Use bold glyph variant when cell is bold
-      uint glyphKey = codepoint;
-      if (cell.bold) {
-        glyphKey = codepoint | 0x80000000u;
-        if (!m_glyphs.contains(glyphKey)) {
-          if (!rasterizeGlyph(codepoint, true)) {
-            glyphKey = codepoint;
-          }
-        }
-      }
-      if (!m_glyphs.contains(glyphKey)) {
-        if (!rasterizeGlyph(codepoint, false)) {
-          glyphKey = QLatin1Char(' ').unicode();
-        }
-      }
+      // Get glyph and rasterize if needed
+      uint glyphKey = getGlyphKey(codepoint, cell.bold);
       const GlyphInfo glyph = m_glyphs.value(glyphKey);
 
       TerminalQuadInstance instance{};
@@ -231,20 +325,8 @@ void VulkanRenderer::updateFromBuffer(const TerminalBuffer *buffer,
       QColor fg = cell.fg;
       QColor bg = cell.bg;
 
-      if (normalized.active) {
-        bool inRange = false;
-        if (row > normalized.startRow && row < normalized.endRow) {
-          inRange = true;
-        } else if (row == normalized.startRow && row == normalized.endRow) {
-          inRange = (col >= normalized.startCol && col < normalized.endCol);
-        } else if (row == normalized.startRow) {
-          inRange = (col >= normalized.startCol);
-        } else if (row == normalized.endRow) {
-          inRange = (col < normalized.endCol);
-        }
-        if (inRange) {
-          bg = m_profile.selection;
-        }
+      if (isCellSelected(row, col, normalized)) {
+        bg = m_profile.selection;
       }
 
       if (cursorVisible && row == cursorRow && col == cursorCol) {
@@ -262,56 +344,9 @@ void VulkanRenderer::updateFromBuffer(const TerminalBuffer *buffer,
       instance.bgA = 1.0f;
 
       m_instances.push_back(instance);
-
-      // Underline decoration: thin quad at bottom of cell
-      if (cell.underline) {
-        const GlyphInfo spaceGlyph = m_glyphs.value(QLatin1Char(' ').unicode());
-        TerminalQuadInstance underline{};
-        underline.posX = instance.posX;
-        underline.posY = instance.posY + instance.sizeY - 2.0f;
-        underline.sizeX = instance.sizeX;
-        underline.sizeY = 1.0f;
-        underline.uvMinX = spaceGlyph.uvMinX;
-        underline.uvMinY = spaceGlyph.uvMinY;
-        underline.uvMaxX = spaceGlyph.uvMaxX;
-        underline.uvMaxY = spaceGlyph.uvMaxY;
-        underline.fgR = fg.redF();
-        underline.fgG = fg.greenF();
-        underline.fgB = fg.blueF();
-        underline.fgA = 1.0f;
-        underline.bgR = fg.redF();
-        underline.bgG = fg.greenF();
-        underline.bgB = fg.blueF();
-        underline.bgA = 1.0f;
-        m_instances.push_back(underline);
-      }
-
-      // Strikethrough decoration: thin quad at middle of cell
-      if (cell.strikethrough) {
-        const GlyphInfo spaceGlyph = m_glyphs.value(QLatin1Char(' ').unicode());
-        TerminalQuadInstance strike{};
-        strike.posX = instance.posX;
-        strike.posY = instance.posY + instance.sizeY * 0.5f;
-        strike.sizeX = instance.sizeX;
-        strike.sizeY = 1.0f;
-        strike.uvMinX = spaceGlyph.uvMinX;
-        strike.uvMinY = spaceGlyph.uvMinY;
-        strike.uvMaxX = spaceGlyph.uvMaxX;
-        strike.uvMaxY = spaceGlyph.uvMaxY;
-        strike.fgR = fg.redF();
-        strike.fgG = fg.greenF();
-        strike.fgB = fg.blueF();
-        strike.fgA = 1.0f;
-        strike.bgR = fg.redF();
-        strike.bgG = fg.greenF();
-        strike.bgB = fg.blueF();
-        strike.bgA = 1.0f;
-        m_instances.push_back(strike);
-      }
+      addDecorationInstances(cell, instance, fg);
     }
   }
-
-  updateInstanceBuffer();
 }
 
 void VulkanRenderer::render() {
@@ -323,6 +358,8 @@ void VulkanRenderer::render() {
 
   vkWaitForFences(m_device, 1, &m_inFlight, VK_TRUE, UINT64_MAX);
   vkResetFences(m_device, 1, &m_inFlight);
+
+  updateInstanceBuffer();
 
   uint32_t imageIndex = 0;
   VkResult acquireResult =
@@ -366,7 +403,7 @@ void VulkanRenderer::render() {
   }
 }
 
-bool VulkanRenderer::createDevice() {
+bool VulkanRenderer::selectPhysicalDevice() {
   uint32_t deviceCount = 0;
   vkEnumeratePhysicalDevices(m_instance->vkInstance(), &deviceCount, nullptr);
   if (deviceCount == 0) {
@@ -391,15 +428,15 @@ bool VulkanRenderer::createDevice() {
       if ((queues[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && presentSupported) {
         m_physicalDevice = device;
         m_graphicsQueueFamily = i;
-        break;
+        return true;
       }
     }
-    if (m_physicalDevice != VK_NULL_HANDLE) {
-      break;
-    }
   }
+  return false;
+}
 
-  if (m_physicalDevice == VK_NULL_HANDLE) {
+bool VulkanRenderer::createDevice() {
+  if (!selectPhysicalDevice()) {
     return false;
   }
 
@@ -429,47 +466,11 @@ bool VulkanRenderer::createDevice() {
 }
 
 bool VulkanRenderer::createSwapchain() {
-  SwapchainSupport support{};
-  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physicalDevice, m_surface,
-                                            &support.capabilities);
+  SwapchainSupport support = querySwapchainSupport(m_physicalDevice, m_surface);
 
-  uint32_t formatCount = 0;
-  vkGetPhysicalDeviceSurfaceFormatsKHR(m_physicalDevice, m_surface,
-                                       &formatCount, nullptr);
-  support.formats.resize(formatCount);
-  vkGetPhysicalDeviceSurfaceFormatsKHR(m_physicalDevice, m_surface,
-                                       &formatCount, support.formats.data());
-
-  uint32_t presentCount = 0;
-  vkGetPhysicalDeviceSurfacePresentModesKHR(m_physicalDevice, m_surface,
-                                            &presentCount, nullptr);
-  support.presentModes.resize(presentCount);
-  vkGetPhysicalDeviceSurfacePresentModesKHR(m_physicalDevice, m_surface,
-                                            &presentCount,
-                                            support.presentModes.data());
-
-  VkSurfaceFormatKHR surfaceFormat = support.formats.first();
-  for (const VkSurfaceFormatKHR &format : support.formats) {
-    if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
-        format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-      surfaceFormat = format;
-      break;
-    }
-  }
-
-  VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
-  for (const VkPresentModeKHR &mode : support.presentModes) {
-    if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
-      presentMode = mode;
-      break;
-    }
-  }
-
-  VkExtent2D extent = support.capabilities.currentExtent;
-  if (extent.width == UINT32_MAX) {
-    extent.width = std::max(1, m_window->width());
-    extent.height = std::max(1, m_window->height());
-  }
+  VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(support.formats);
+  VkPresentModeKHR presentMode = chooseSwapPresentMode(support.presentModes);
+  VkExtent2D extent = chooseSwapExtent(support.capabilities, m_window);
 
   uint32_t imageCount = support.capabilities.minImageCount + 1;
   if (support.capabilities.maxImageCount > 0 &&
@@ -969,8 +970,7 @@ bool VulkanRenderer::createAtlas() {
   VkCommandBuffer commandBuffer = beginSingleTimeCommands();
   transitionImageLayout(commandBuffer, m_atlasImage, VK_IMAGE_LAYOUT_UNDEFINED,
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  copyBufferToImage(commandBuffer, stagingBuffer, m_atlasImage, width, height,
-                    rowLength);
+  copyBufferToImage(commandBuffer, stagingBuffer, m_atlasImage, {width, height, rowLength});
   transitionImageLayout(commandBuffer, m_atlasImage,
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -1112,45 +1112,10 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   vkEndCommandBuffer(cmd);
 }
 
-void VulkanRenderer::buildGlyphAtlas(const QFont &font) {
-  QFontMetrics metrics(font);
-  m_cellSize = QSize(metrics.horizontalAdvance(QLatin1Char('M')),
-                     metrics.height());
-  m_atlasFont = font;
-
-  const int atlasWidth = 2048;
-  const int atlasHeight = 2048;
-  m_atlasImageCpu = QImage(atlasWidth, atlasHeight, QImage::Format_Grayscale8);
-  m_atlasImageCpu.fill(0);
-
-  QPainter painter(&m_atlasImageCpu);
-  painter.setFont(font);
-  painter.setPen(Qt::white);
-
-  int x = 0;
-  int y = 0;
+void VulkanRenderer::preRasterizeGlyphRanges(QPainter &painter, int &x, int &y, int atlasWidth, int atlasHeight) {
   const int cellWidth = m_cellSize.width();
   const int cellHeight = m_cellSize.height();
-
-  // Unicode ranges to pre-rasterize
-  struct Range { uint start; uint end; };
-  static const Range ranges[] = {
-      {0x0020, 0x007E},   // Basic Latin
-      {0x00A0, 0x00FF},   // Latin-1 Supplement
-      {0x0100, 0x024F},   // Latin Extended-A & B
-      {0x0370, 0x03FF},   // Greek and Coptic
-      {0x0400, 0x04FF},   // Cyrillic
-      {0x2000, 0x206F},   // General Punctuation
-      {0x2190, 0x21FF},   // Arrows
-      {0x2200, 0x22FF},   // Mathematical Operators
-      {0x2300, 0x23FF},   // Miscellaneous Technical
-      {0x2500, 0x257F},   // Box Drawing
-      {0x2580, 0x259F},   // Block Elements
-      {0x25A0, 0x25FF},   // Geometric Shapes
-      {0x2600, 0x26FF},   // Miscellaneous Symbols
-      {0x2700, 0x27BF},   // Dingbats
-      {0xE000, 0xE0FF},   // Private Use (Powerline, Nerd Fonts start)
-  };
+  QFontMetrics metrics(painter.font());
 
   auto insertGlyph = [&](uint codepoint) {
     if (x + cellWidth > atlasWidth) {
@@ -1177,19 +1142,27 @@ void VulkanRenderer::buildGlyphAtlas(const QFont &font) {
     x += cellWidth;
   };
 
+  struct Range { uint start; uint end; };
+  static const Range ranges[] = {
+      {0x0020, 0x007E},   {0x00A0, 0x00FF},   {0x0100, 0x024F},
+      {0x0370, 0x03FF},   {0x0400, 0x04FF},   {0x2000, 0x206F},
+      {0x2190, 0x21FF},   {0x2200, 0x22FF},   {0x2300, 0x23FF},
+      {0x2500, 0x257F},   {0x2580, 0x259F},   {0x25A0, 0x25FF},
+      {0x2600, 0x26FF},   {0x2700, 0x27BF},   {0xE000, 0xE0FF},
+  };
+
   for (const Range &range : ranges) {
     for (uint cp = range.start; cp <= range.end; ++cp) {
       insertGlyph(cp);
     }
   }
+}
 
-  m_atlasCursorX = x;
-  m_atlasCursorY = y;
-
-  // Rasterize bold variants for pre-loaded glyphs
-  QFont boldFont = font;
-  boldFont.setBold(true);
+void VulkanRenderer::preRasterizeBoldGlyphs(QPainter &painter, const QFont &boldFont, int atlasWidth, int atlasHeight) {
   painter.setFont(boldFont);
+  QFontMetrics boldMetrics(boldFont);
+  const int cellWidth = m_cellSize.width();
+  const int cellHeight = m_cellSize.height();
 
   QList<uint> regularKeys = m_glyphs.keys();
   for (uint cp : regularKeys) {
@@ -1205,7 +1178,6 @@ void VulkanRenderer::buildGlyphAtlas(const QFont &font) {
       break;
     }
 
-    QFontMetrics boldMetrics(boldFont);
     QPoint baseline(m_atlasCursorX, m_atlasCursorY + boldMetrics.ascent());
     painter.drawText(baseline, QString(QChar(cp)));
 
@@ -1218,6 +1190,33 @@ void VulkanRenderer::buildGlyphAtlas(const QFont &font) {
 
     m_atlasCursorX += cellWidth;
   }
+}
+
+void VulkanRenderer::buildGlyphAtlas(const QFont &font) {
+  QFontMetrics metrics(font);
+  m_cellSize = QSize(metrics.horizontalAdvance(QLatin1Char('M')),
+                     metrics.height());
+  m_atlasFont = font;
+
+  const int atlasWidth = 2048;
+  const int atlasHeight = 2048;
+  m_atlasImageCpu = QImage(atlasWidth, atlasHeight, QImage::Format_Grayscale8);
+  m_atlasImageCpu.fill(0);
+
+  QPainter painter(&m_atlasImageCpu);
+  painter.setFont(font);
+  painter.setPen(Qt::white);
+
+  int x = 0;
+  int y = 0;
+  preRasterizeGlyphRanges(painter, x, y, atlasWidth, atlasHeight);
+
+  m_atlasCursorX = x;
+  m_atlasCursorY = y;
+
+  QFont boldFont = font;
+  boldFont.setBold(true);
+  preRasterizeBoldGlyphs(painter, boldFont, atlasWidth, atlasHeight);
 
   if (!m_glyphs.contains(QLatin1Char(' ').unicode())) {
     m_glyphs.insert(QLatin1Char(' ').unicode(), {});
@@ -1322,7 +1321,7 @@ void VulkanRenderer::reuploadAtlas() {
   transitionImageLayout(cmd, m_atlasImage,
                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  copyBufferToImage(cmd, stagingBuffer, m_atlasImage, width, height, rowLength);
+  copyBufferToImage(cmd, stagingBuffer, m_atlasImage, {width, height, rowLength});
   transitionImageLayout(cmd, m_atlasImage,
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -1461,18 +1460,17 @@ void VulkanRenderer::transitionImageLayout(VkCommandBuffer commandBuffer,
 
 void VulkanRenderer::copyBufferToImage(VkCommandBuffer commandBuffer,
                                        VkBuffer buffer, VkImage image,
-                                       uint32_t width, uint32_t height,
-                                       uint32_t rowLength) {
+                                       const BufferCopyRegion& copyRegion) {
   VkBufferImageCopy region{};
   region.bufferOffset = 0;
-  region.bufferRowLength = rowLength;
-  region.bufferImageHeight = height;
+  region.bufferRowLength = copyRegion.rowLength;
+  region.bufferImageHeight = copyRegion.height;
   region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   region.imageSubresource.mipLevel = 0;
   region.imageSubresource.baseArrayLayer = 0;
   region.imageSubresource.layerCount = 1;
   region.imageOffset = {0, 0, 0};
-  region.imageExtent = {width, height, 1};
+  region.imageExtent = {copyRegion.width, copyRegion.height, 1};
 
   vkCmdCopyBufferToImage(commandBuffer, buffer, image,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);

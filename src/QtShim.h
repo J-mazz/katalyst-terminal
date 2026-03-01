@@ -367,6 +367,11 @@ private:
 	void scrollToLine(int line);
 	void drawSearchHighlights(QPainter &painter, const QString &line, int row);
 	void drawCursor(QPainter &painter, int startLine);
+	void paintRowBackgrounds(QPainter &painter, const TerminalBuffer *buffer, int row, int cols);
+	void paintRowSelection(QPainter &painter, int row, int cols);
+	void paintRowText(QPainter &painter, const TerminalBuffer *buffer, int row, int cols, int y);
+	bool isSelectionReversed(const CellPos &start, const CellPos &end) const;
+	static bool isCellVisuallyEmpty(const TerminalBuffer::Cell &cell);
 
 	TerminalSession *m_session = nullptr;
 	TerminalConfig *m_config = nullptr;
@@ -455,9 +460,14 @@ private:
 		float uvMaxY = 0.0f;
 	};
 
+	bool selectPhysicalDevice();
 	bool createDevice();
 	bool createSwapchain();
 	void cleanupSwapchain();
+	void cleanupAtlas();
+	void cleanupBuffers();
+	void cleanupDescriptors();
+	void cleanupSyncObjects();
 	bool createRenderPass();
 	bool createPipeline();
 	bool createFramebuffers();
@@ -470,6 +480,8 @@ private:
 
 	void recordCommandBuffer(uint32_t imageIndex);
 	void buildGlyphAtlas(const QFont &font);
+	void preRasterizeGlyphRanges(QPainter &painter, int &x, int &y, int atlasWidth, int atlasHeight);
+	void preRasterizeBoldGlyphs(QPainter &painter, const QFont &boldFont, int atlasWidth, int atlasHeight);
 	void updateInstanceBuffer();
 	bool rasterizeGlyph(uint codepoint, bool bold = false);
 	void reuploadAtlas();
@@ -478,9 +490,21 @@ private:
 	void transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image,
 														 VkImageLayout oldLayout,
 														 VkImageLayout newLayout);
+	struct BufferCopyRegion {
+		uint32_t width;
+		uint32_t height;
+		uint32_t rowLength;
+	};
 	void copyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer,
-												 VkImage image, uint32_t width, uint32_t height,
-												 uint32_t rowLength);
+												 VkImage image, const BufferCopyRegion& copyRegion);
+
+	// Helper functions for updateFromBuffer to reduce complexity
+	void normalizeSelection(Selection &selection);
+	uint getGlyphKey(uint codepoint, bool bold);
+	bool isCellSelected(int row, int col, const Selection &sel) const;
+	void addDecorationInstances(const TerminalBuffer::Cell &cell,
+															const TerminalQuadInstance &baseInstance,
+															const QColor &fg);
 
 	uint32_t findMemoryType(uint32_t typeFilter,
 													VkMemoryPropertyFlags properties) const;

@@ -1,7 +1,6 @@
 # Katalyst Terminal
 
-A KDE Plasma terminal emulator with its own PTY, scrollback buffer, tabs,
-splits, and search.
+A KDE Plasma terminal emulator with its own PTY, and scrollback buffer.
 
 ## Build
 

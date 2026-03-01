@@ -77,10 +77,64 @@ TerminalSession *TerminalView::session() const {
   return m_session;
 }
 
-void TerminalView::paintEvent(QPaintEvent *) {
-  if (!m_session || !m_session->buffer()) {
-    return;
+bool TerminalView::isSelectionReversed(const CellPos &start, const CellPos &end) const {
+  return start.row > end.row ||
+         (start.row == end.row && start.column > end.column);
+}
+
+bool TerminalView::isCellVisuallyEmpty(const TerminalBuffer::Cell &cell) {
+  return cell.ch == QLatin1Char(' ') && !cell.underline && !cell.strikethrough;
+}
+
+void TerminalView::paintRowBackgrounds(QPainter &painter, const TerminalBuffer *buffer, int row, int cols) {
+  for (int col = 0; col < cols; ++col) {
+    const TerminalBuffer::Cell cell = buffer->cellAtVisible(row, col, m_scrollOffset);
+    if (cell.bg != m_background) {
+      painter.fillRect(QRect(col * m_cellWidth, row * m_cellHeight, m_cellWidth, m_cellHeight), cell.bg);
+    }
   }
+}
+
+void TerminalView::paintRowSelection(QPainter &painter, int row, int cols) {
+  if (!hasSelection()) return;
+  CellPos start = m_selectStart;
+  CellPos end = m_selectEnd;
+  if (isSelectionReversed(start, end)) qSwap(start, end);
+  if (row < start.row || row > end.row) return;
+  int startCol = (row == start.row) ? start.column : 0;
+  int endCol   = (row == end.row)   ? end.column   : cols;
+  int width = qMax(0, endCol - startCol) * m_cellWidth;
+  painter.fillRect(QRect(startCol * m_cellWidth, row * m_cellHeight, width, m_cellHeight), m_selection);
+}
+
+void TerminalView::paintRowText(QPainter &painter, const TerminalBuffer *buffer, int row, int cols, int y) {
+  for (int col = 0; col < cols; ++col) {
+    const TerminalBuffer::Cell cell = buffer->cellAtVisible(row, col, m_scrollOffset);
+    if (isCellVisuallyEmpty(cell)) continue;
+    int x = col * m_cellWidth;
+
+    QFont cellFont = m_font;
+    if (cell.bold)   cellFont.setBold(true);
+    if (cell.italic) cellFont.setItalic(true);
+    painter.setFont(cellFont);
+
+    if (cell.ch != QLatin1Char(' ')) {
+      painter.setPen(cell.fg);
+      painter.drawText(x, y, QString(cell.ch));
+    }
+    if (cell.underline) {
+      painter.setPen(cell.fg);
+      painter.drawLine(x, row * m_cellHeight + m_cellHeight - 2, x + m_cellWidth, row * m_cellHeight + m_cellHeight - 2);
+    }
+    if (cell.strikethrough) {
+      painter.setPen(cell.fg);
+      painter.drawLine(x, row * m_cellHeight + m_cellHeight / 2, x + m_cellWidth, row * m_cellHeight + m_cellHeight / 2);
+    }
+  }
+}
+
+void TerminalView::paintEvent(QPaintEvent *) {
+  if (!m_session || !m_session->buffer()) return;
 
   QPainter painter(this);
   painter.fillRect(rect(), m_background);
@@ -89,83 +143,14 @@ void TerminalView::paintEvent(QPaintEvent *) {
   const TerminalBuffer *buffer = m_session->buffer();
   const int rows = buffer->rows();
   const int cols = buffer->columns();
-  const int total = buffer->totalLines();
-  const int startLine = qMax(0, total - rows - m_scrollOffset);
+  const int startLine = qMax(0, buffer->totalLines() - rows - m_scrollOffset);
 
   for (int row = 0; row < rows; ++row) {
-    int y = (row + 1) * m_cellHeight - m_cellHeight / 4;
-
-    // Draw per-cell backgrounds and foregrounds
-    for (int col = 0; col < cols; ++col) {
-      const TerminalBuffer::Cell cell =
-          buffer->cellAtVisible(row, col, m_scrollOffset);
-      int x = col * m_cellWidth;
-
-      // Cell background
-      if (cell.bg != m_background) {
-        painter.fillRect(QRect(x, row * m_cellHeight, m_cellWidth, m_cellHeight),
-                         cell.bg);
-      }
-    }
-
-    // Selection highlight
-    if (hasSelection()) {
-      CellPos start = m_selectStart;
-      CellPos end = m_selectEnd;
-      if (start.row > end.row ||
-          (start.row == end.row && start.column > end.column)) {
-        qSwap(start, end);
-      }
-
-      if (row >= start.row && row <= end.row) {
-        int startCol = (row == start.row) ? start.column : 0;
-        int endCol = (row == end.row) ? end.column : cols;
-        int x = startCol * m_cellWidth;
-        int width = qMax(0, (endCol - startCol)) * m_cellWidth;
-        painter.fillRect(QRect(x, row * m_cellHeight, width, m_cellHeight),
-                         m_selection);
-      }
-    }
-
-    // Search highlights
-    if (!m_searchTerm.isEmpty()) {
-      drawSearchHighlights(painter, buffer->lineAt(startLine + row), row);
-    }
-
-    // Draw per-cell text
-    for (int col = 0; col < cols; ++col) {
-      const TerminalBuffer::Cell cell =
-          buffer->cellAtVisible(row, col, m_scrollOffset);
-      if (cell.ch == QLatin1Char(' ') && !cell.underline && !cell.strikethrough) {
-        continue;
-      }
-      int x = col * m_cellWidth;
-
-      QFont cellFont = m_font;
-      if (cell.bold) {
-        cellFont.setBold(true);
-      }
-      if (cell.italic) {
-        cellFont.setItalic(true);
-      }
-      painter.setFont(cellFont);
-
-      if (cell.ch != QLatin1Char(' ')) {
-        painter.setPen(cell.fg);
-        painter.drawText(x, y, QString(cell.ch));
-      }
-
-      if (cell.underline) {
-        painter.setPen(cell.fg);
-        int underY = row * m_cellHeight + m_cellHeight - 2;
-        painter.drawLine(x, underY, x + m_cellWidth, underY);
-      }
-      if (cell.strikethrough) {
-        painter.setPen(cell.fg);
-        int strikeY = row * m_cellHeight + m_cellHeight / 2;
-        painter.drawLine(x, strikeY, x + m_cellWidth, strikeY);
-      }
-    }
+    const int y = (row + 1) * m_cellHeight - m_cellHeight / 4;
+    paintRowBackgrounds(painter, buffer, row, cols);
+    paintRowSelection(painter, row, cols);
+    if (!m_searchTerm.isEmpty()) drawSearchHighlights(painter, buffer->lineAt(startLine + row), row);
+    paintRowText(painter, buffer, row, cols, y);
   }
 
   drawCursor(painter, startLine);
@@ -274,23 +259,19 @@ bool TerminalView::hasSelection() const {
 }
 
 QString TerminalView::selectedText() const {
-  if (!hasSelection() || !m_session || !m_session->buffer()) {
-    return QString();
-  }
+  if (!hasSelection() || !m_session || !m_session->buffer()) return QString();
 
-  QStringList lines = m_session->buffer()->snapshot(m_scrollOffset);
+  const TerminalBuffer *buffer = m_session->buffer();
   CellPos start = m_selectStart;
   CellPos end = m_selectEnd;
-  if (start.row > end.row ||
-      (start.row == end.row && start.column > end.column)) {
-    qSwap(start, end);
-  }
+  if (isSelectionReversed(start, end)) qSwap(start, end);
 
+  const int rows = buffer->rows();
   QStringList selected;
-  for (int row = start.row; row <= end.row && row < lines.size(); ++row) {
-    const QString &line = lines[row];
+  for (int row = start.row; row <= end.row && row < rows; ++row) {
+    const QString line = buffer->lineAt(buffer->totalLines() - rows - m_scrollOffset + row);
     int startCol = (row == start.row) ? start.column : 0;
-    int endCol = (row == end.row) ? end.column : line.size();
+    int endCol   = (row == end.row)   ? end.column   : line.size();
     selected.push_back(line.mid(startCol, endCol - startCol));
   }
   return selected.join(QLatin1Char('\n'));
@@ -312,39 +293,25 @@ TerminalView::CellPos TerminalView::cellFromPoint(const QPoint &pos) const {
 }
 
 QByteArray TerminalView::keyToSequence(QKeyEvent *event) const {
-  switch (event->key()) {
-    case Qt::Key_Backspace:
-      return QByteArray("\x7f");
-    case Qt::Key_Return:
-    case Qt::Key_Enter:
-      return QByteArray("\r");
-    case Qt::Key_Tab:
-      return QByteArray("\t");
-    case Qt::Key_Left:
-      return QByteArray("\x1b[D");
-    case Qt::Key_Right:
-      return QByteArray("\x1b[C");
-    case Qt::Key_Up:
-      return QByteArray("\x1b[A");
-    case Qt::Key_Down:
-      return QByteArray("\x1b[B");
-    case Qt::Key_PageUp:
-      return QByteArray("\x1b[5~");
-    case Qt::Key_PageDown:
-      return QByteArray("\x1b[6~");
-    case Qt::Key_Home:
-      return QByteArray("\x1b[H");
-    case Qt::Key_End:
-      return QByteArray("\x1b[F");
-    default:
-      break;
+  static const std::pair<int, const char *> keyTable[] = {
+    { Qt::Key_Backspace, "\x7f"    },
+    { Qt::Key_Return,    "\r"      },
+    { Qt::Key_Enter,     "\r"      },
+    { Qt::Key_Tab,       "\t"      },
+    { Qt::Key_Left,      "\x1b[D" },
+    { Qt::Key_Right,     "\x1b[C" },
+    { Qt::Key_Up,        "\x1b[A" },
+    { Qt::Key_Down,      "\x1b[B" },
+    { Qt::Key_PageUp,    "\x1b[5~"},
+    { Qt::Key_PageDown,  "\x1b[6~"},
+    { Qt::Key_Home,      "\x1b[H" },
+    { Qt::Key_End,       "\x1b[F" },
+  };
+  for (const auto &[key, seq] : keyTable) {
+    if (event->key() == key) return QByteArray(seq);
   }
-
   const QString text = event->text();
-  if (!text.isEmpty() && !event->text().at(0).isNull()) {
-    return text.toLocal8Bit();
-  }
-
+  if (!text.isEmpty() && !text.at(0).isNull()) return text.toLocal8Bit();
   return QByteArray();
 }
 

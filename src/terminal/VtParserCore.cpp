@@ -55,130 +55,124 @@ bool handleOsc(VtParserCore *core, QString *titleOut) {
   return false;
 }
 
+void handleCursorPosition(VtParserCore *core, TerminalBuffer *buffer) {
+  int row = core->params.size() > 0 && core->params[0] > 0 ? core->params[0] - 1 : 0;
+  int col = core->params.size() > 1 && core->params[1] > 0 ? core->params[1] - 1 : 0;
+  buffer->setCursorPosition(row, col);
+}
+
+int applyExtendedColor(const QList<int> &params, TerminalBuffer *buffer, bool isFg, int i) {
+  if (i + 1 < params.size() && params[i + 1] == 5) {
+    if (i + 2 < params.size()) {
+      int idx = params[i + 2];
+      if (isFg) buffer->setForeground(xtermColorFromIndex(idx));
+      else       buffer->setBackground(xtermColorFromIndex(idx));
+      return 2;
+    }
+  } else if (i + 1 < params.size() && params[i + 1] == 2) {
+    if (i + 4 < params.size()) {
+      int r = qBound(0, params[i + 2], 255);
+      int g = qBound(0, params[i + 3], 255);
+      int b = qBound(0, params[i + 4], 255);
+      if (isFg) buffer->setForeground(QColor(r, g, b));
+      else       buffer->setBackground(QColor(r, g, b));
+      return 4;
+    }
+  }
+  return 0;
+}
+
+bool applyStandardColorParam(int param, TerminalBuffer *buffer) {
+  if (param >= 30  && param <= 37)  { buffer->setForeground(xtermColorFromIndex(param - 30));      return true; }
+  if (param >= 90  && param <= 97)  { buffer->setForeground(xtermColorFromIndex(param - 90 + 8)); return true; }
+  if (param >= 40  && param <= 47)  { buffer->setBackground(xtermColorFromIndex(param - 40));      return true; }
+  if (param >= 100 && param <= 107) { buffer->setBackground(xtermColorFromIndex(param - 100 + 8)); return true; }
+  return false;
+}
+
+void applySgrParams(QList<int> &params, TerminalBuffer *buffer) {
+  if (params.isEmpty()) params.push_back(0);
+  for (int i = 0; i < params.size(); ++i) {
+    int param = params[i];
+    switch (classifySgrParam(param)) {
+      case SgrAction::Reset:        buffer->resetAttributes();                       continue;
+      case SgrAction::BoldOn:       buffer->setBold(true);                           continue;
+      case SgrAction::ItalicOn:     buffer->setItalic(true);                         continue;
+      case SgrAction::UnderlineOn:  buffer->setUnderline(true);                      continue;
+      case SgrAction::InverseOn:    buffer->setInverse(true);                        continue;
+      case SgrAction::StrikeOn:     buffer->setStrikethrough(true);                  continue;
+      case SgrAction::BoldOff:      buffer->setBold(false);                          continue;
+      case SgrAction::ItalicOff:    buffer->setItalic(false);                        continue;
+      case SgrAction::UnderlineOff: buffer->setUnderline(false);                     continue;
+      case SgrAction::InverseOff:   buffer->setInverse(false);                       continue;
+      case SgrAction::StrikeOff:    buffer->setStrikethrough(false);                 continue;
+      case SgrAction::FgDefault:    buffer->setForeground(buffer->defaultForeground()); continue;
+      case SgrAction::BgDefault:    buffer->setBackground(buffer->defaultBackground()); continue;
+      case SgrAction::Unknown:      break;
+    }
+    if (param == 38 || param == 48) {
+      i += applyExtendedColor(params, buffer, param == 38, i);
+      continue;
+    }
+    applyStandardColorParam(param, buffer);
+  }
+}
+
 void handleCsiCommand(VtParserCore *core, TerminalBuffer *buffer, char command) {
   switch (command) {
     case 'J': {
       int mode = core->params.isEmpty() ? 0 : core->params.first();
-      if (mode == 0 || mode == 2) {
-        buffer->clear();
-      }
+      if (mode == 0 || mode == 2) buffer->clear();
       break;
     }
-    case 'H': {
-      int row = core->params.size() > 0 && core->params[0] > 0
-                    ? core->params[0] - 1
-                    : 0;
-      int col = core->params.size() > 1 && core->params[1] > 0
-                    ? core->params[1] - 1
-                    : 0;
-      buffer->setCursorPosition(row, col);
-      break;
-    }
-    case 'K':
-      buffer->clearLine();
-      break;
-    case 'm': {
-      if (core->params.isEmpty()) {
-        core->params.push_back(0);
-      }
-
-      for (int i = 0; i < core->params.size(); ++i) {
-        int param = core->params[i];
-        switch (classifySgrParam(param)) {
-          case SgrAction::Reset:
-            buffer->resetAttributes();
-            continue;
-          case SgrAction::BoldOn:
-            buffer->setBold(true);
-            continue;
-          case SgrAction::ItalicOn:
-            buffer->setItalic(true);
-            continue;
-          case SgrAction::UnderlineOn:
-            buffer->setUnderline(true);
-            continue;
-          case SgrAction::InverseOn:
-            buffer->setInverse(true);
-            continue;
-          case SgrAction::StrikeOn:
-            buffer->setStrikethrough(true);
-            continue;
-          case SgrAction::BoldOff:
-            buffer->setBold(false);
-            continue;
-          case SgrAction::ItalicOff:
-            buffer->setItalic(false);
-            continue;
-          case SgrAction::UnderlineOff:
-            buffer->setUnderline(false);
-            continue;
-          case SgrAction::InverseOff:
-            buffer->setInverse(false);
-            continue;
-          case SgrAction::StrikeOff:
-            buffer->setStrikethrough(false);
-            continue;
-          case SgrAction::FgDefault:
-            buffer->setForeground(buffer->defaultForeground());
-            continue;
-          case SgrAction::BgDefault:
-            buffer->setBackground(buffer->defaultBackground());
-            continue;
-          case SgrAction::Unknown:
-            break;
-        }
-
-        if (param == 38 || param == 48) {
-          bool isFg = (param == 38);
-          if (i + 1 < core->params.size() && core->params[i + 1] == 5) {
-            if (i + 2 < core->params.size()) {
-              int idx = core->params[i + 2];
-              if (isFg) {
-                buffer->setForeground(xtermColorFromIndex(idx));
-              } else {
-                buffer->setBackground(xtermColorFromIndex(idx));
-              }
-              i += 2;
-            }
-          } else if (i + 1 < core->params.size() && core->params[i + 1] == 2) {
-            if (i + 4 < core->params.size()) {
-              int r = qBound(0, core->params[i + 2], 255);
-              int g = qBound(0, core->params[i + 3], 255);
-              int b = qBound(0, core->params[i + 4], 255);
-              if (isFg) {
-                buffer->setForeground(QColor(r, g, b));
-              } else {
-                buffer->setBackground(QColor(r, g, b));
-              }
-              i += 4;
-            }
-          }
-          continue;
-        }
-
-        if (param >= 30 && param <= 37) {
-          buffer->setForeground(xtermColorFromIndex(param - 30));
-          continue;
-        }
-        if (param >= 90 && param <= 97) {
-          buffer->setForeground(xtermColorFromIndex(param - 90 + 8));
-          continue;
-        }
-        if (param >= 40 && param <= 47) {
-          buffer->setBackground(xtermColorFromIndex(param - 40));
-          continue;
-        }
-        if (param >= 100 && param <= 107) {
-          buffer->setBackground(xtermColorFromIndex(param - 100 + 8));
-          continue;
-        }
-      }
-      break;
-    }
-    default:
-      break;
+    case 'H': handleCursorPosition(core, buffer); break;
+    case 'K': buffer->clearLine(); break;
+    case 'm': applySgrParams(core->params, buffer); break;
+    default: break;
   }
   core->params.clear();
+}
+
+void handleNormalByte(VtParserCore *core, TerminalBuffer *buffer, unsigned char raw) {
+  const char ch = static_cast<char>(raw);
+  if      (raw == 0x1b)               { core->state = VtParserCore::State::Escape; }
+  else if (raw == 0x0a)               { buffer->newline(); }
+  else if (raw == 0x0d)               { buffer->carriageReturn(); }
+  else if (raw == 0x08)               { buffer->backspace(); }
+  else if (raw == 0x09)               { buffer->tab(); }
+  else if (raw == 0x7f)               { /* DEL — ignore */ }
+  else if (raw >= 0x20 && raw < 0x80) { buffer->putChar(QChar(raw)); }
+  else if (raw >= 0x80) {
+    const QString decoded = core->utf8Decoder.decode(QByteArrayView(&ch, 1));
+    for (QChar out : decoded) buffer->putChar(out);
+  }
+}
+
+void handleCsiByte(VtParserCore *core, TerminalBuffer *buffer, char ch) {
+  if (ch >= '0' && ch <= '9') {
+    if (core->currentParam < 0) core->currentParam = 0;
+    core->currentParam = core->currentParam * 10 + (ch - '0');
+  } else if (ch == ';') {
+    finalizeParam(core);
+  } else {
+    finalizeParam(core);
+    handleCsiCommand(core, buffer, ch);
+    core->state = VtParserCore::State::Normal;
+  }
+}
+
+bool handleOscByte(VtParserCore *core, unsigned char raw, QString *titleOut) {
+  if (raw == 0x07) {
+    bool changed = handleOsc(core, titleOut);
+    core->state = VtParserCore::State::Normal;
+    return changed;
+  }
+  if (raw == 0x1b) {
+    core->state = VtParserCore::State::OscEscape;
+  } else {
+    core->oscString.append(QChar(raw));
+  }
+  return false;
 }
 }
 
@@ -205,26 +199,7 @@ bool feedVtParserCore(VtParserCore *core, TerminalBuffer *buffer,
     const char ch = static_cast<char>(raw);
     switch (core->state) {
       case VtParserCore::State::Normal:
-        if (raw == 0x1b) {
-          core->state = VtParserCore::State::Escape;
-        } else if (raw == 0x0a) {
-          buffer->newline();
-        } else if (raw == 0x0d) {
-          buffer->carriageReturn();
-        } else if (raw == 0x08) {
-          buffer->backspace();
-        } else if (raw == 0x09) {
-          buffer->tab();
-        } else if (raw == 0x7f) {
-          break;
-        } else if (raw >= 0x20 && raw < 0x80) {
-          buffer->putChar(QChar(raw));
-        } else if (raw >= 0x80) {
-          const QString decoded = core->utf8Decoder.decode(QByteArrayView(&ch, 1));
-          for (QChar out : decoded) {
-            buffer->putChar(out);
-          }
-        }
+        handleNormalByte(core, buffer, raw);
         break;
       case VtParserCore::State::Escape:
         if (ch == '[') {
@@ -239,33 +214,13 @@ bool feedVtParserCore(VtParserCore *core, TerminalBuffer *buffer,
         }
         break;
       case VtParserCore::State::Csi:
-        if (ch >= '0' && ch <= '9') {
-          if (core->currentParam < 0) {
-            core->currentParam = 0;
-          }
-          core->currentParam = core->currentParam * 10 + (ch - '0');
-        } else if (ch == ';') {
-          finalizeParam(core);
-        } else {
-          finalizeParam(core);
-          handleCsiCommand(core, buffer, ch);
-          core->state = VtParserCore::State::Normal;
-        }
+        handleCsiByte(core, buffer, ch);
         break;
       case VtParserCore::State::Osc:
-        if (raw == 0x07) {
-          titleChanged = handleOsc(core, titleOut) || titleChanged;
-          core->state = VtParserCore::State::Normal;
-        } else if (raw == 0x1b) {
-          core->state = VtParserCore::State::OscEscape;
-        } else {
-          core->oscString.append(QChar(raw));
-        }
+        titleChanged = handleOscByte(core, raw, titleOut) || titleChanged;
         break;
       case VtParserCore::State::OscEscape:
-        if (ch == '\\') {
-          titleChanged = handleOsc(core, titleOut) || titleChanged;
-        }
+        if (ch == '\\') titleChanged = handleOsc(core, titleOut) || titleChanged;
         core->state = VtParserCore::State::Normal;
         break;
     }
