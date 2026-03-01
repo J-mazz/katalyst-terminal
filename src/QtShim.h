@@ -467,6 +467,7 @@ private:
 
 	bool selectPhysicalDevice();
 	bool createDevice();
+	bool createSwapchainImageViews();
 	bool createSwapchain();
 	void cleanupSwapchain();
 	void cleanupAtlas();
@@ -474,32 +475,46 @@ private:
 	void cleanupDescriptors();
 	void cleanupSyncObjects();
 	bool createRenderPass();
+	bool createDescriptorSetLayout();
+	bool createPipelineLayout();
 	bool createPipeline();
 	bool createFramebuffers();
 	bool createCommandPool();
 	bool createCommandBuffers();
+	bool createVertexBuffer();
+	bool createInstanceBuffer();
 	bool createBuffers();
+	bool createAtlasImage(uint32_t width, uint32_t height);
+	bool createAtlasView();
+	bool createAtlasSampler();
 	bool createAtlas();
 	bool createDescriptorSet();
 	bool createSyncObjects();
 
 	void recordCommandBuffer(uint32_t imageIndex);
 	void buildGlyphAtlas(const QFont &font);
+	void insertGlyphAt(QPainter &painter, uint codepoint, int &x, int &y,
+	                   int atlasWidth, int atlasHeight, const QFontMetrics &metrics);
 	void preRasterizeGlyphRanges(QPainter &painter, int &x, int &y, int atlasWidth, int atlasHeight);
+	void rasterizeBoldGlyph(QPainter &painter, uint cp,
+	                        const QFontMetrics &metrics, int atlasWidth, int atlasHeight);
 	void preRasterizeBoldGlyphs(QPainter &painter, const QFont &boldFont, int atlasWidth, int atlasHeight);
 	void updateInstanceBuffer();
+	bool growInstanceBuffer(size_t needed);
 	bool rasterizeGlyph(uint codepoint, bool bold = false);
+	struct BufferCopyRegion {
+		uint32_t width;
+		uint32_t height;
+		uint32_t rowLength;
+	};
+	bool allocateStagingBuffer(VkDeviceSize imageSize, VkBuffer &stagingBuffer, VkDeviceMemory &stagingMemory);
+	void uploadStagingToAtlas(VkBuffer stagingBuffer, const BufferCopyRegion &region);
 	void reuploadAtlas();
 	VkCommandBuffer beginSingleTimeCommands();
 	void endSingleTimeCommands(VkCommandBuffer commandBuffer);
 	void transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image,
 														 VkImageLayout oldLayout,
 														 VkImageLayout newLayout);
-	struct BufferCopyRegion {
-		uint32_t width;
-		uint32_t height;
-		uint32_t rowLength;
-	};
 	void copyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer,
 												 VkImage image, const BufferCopyRegion& copyRegion);
 

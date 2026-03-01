@@ -465,6 +465,22 @@ bool VulkanRenderer::createDevice() {
   return true;
 }
 
+bool VulkanRenderer::createSwapchainImageViews() {
+  for (int i = 0; i < m_swapchainImages.size(); ++i) {
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = m_swapchainImages[i];
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = m_swapchainFormat;
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+    if (vkCreateImageView(m_device, &viewInfo, nullptr,
+                          &m_swapchainImageViews[i]) != VK_SUCCESS)
+      return false;
+  }
+  return true;
+}
+
 bool VulkanRenderer::createSwapchain() {
   SwapchainSupport support = querySwapchainSupport(m_physicalDevice, m_surface);
 
@@ -494,10 +510,8 @@ bool VulkanRenderer::createSwapchain() {
   createInfo.clipped = VK_TRUE;
   createInfo.oldSwapchain = VK_NULL_HANDLE;
 
-  if (vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapchain) !=
-      VK_SUCCESS) {
+  if (vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapchain) != VK_SUCCESS)
     return false;
-  }
 
   m_swapchainFormat = surfaceFormat.format;
   m_swapchainExtent = extent;
@@ -509,25 +523,7 @@ bool VulkanRenderer::createSwapchain() {
                           m_swapchainImages.data());
 
   m_swapchainImageViews.resize(swapchainImageCount);
-  for (int i = 0; i < m_swapchainImages.size(); ++i) {
-    VkImageViewCreateInfo viewInfo{};
-    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = m_swapchainImages[i];
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = m_swapchainFormat;
-    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = 1;
-
-    if (vkCreateImageView(m_device, &viewInfo, nullptr,
-                          &m_swapchainImageViews[i]) != VK_SUCCESS) {
-      return false;
-    }
-  }
-
-  return true;
+  return createSwapchainImageViews();
 }
 
 void VulkanRenderer::cleanupSwapchain() {
@@ -600,18 +596,48 @@ bool VulkanRenderer::createRenderPass() {
                             &m_renderPass) == VK_SUCCESS;
 }
 
+bool VulkanRenderer::createDescriptorSetLayout() {
+  if (m_descriptorSetLayout != VK_NULL_HANDLE) return true;
+  VkDescriptorSetLayoutBinding samplerBinding{};
+  samplerBinding.binding = 0;
+  samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  samplerBinding.descriptorCount = 1;
+  samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo layoutInfo{};
+  layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  layoutInfo.bindingCount = 1;
+  layoutInfo.pBindings = &samplerBinding;
+
+  return vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr,
+                                     &m_descriptorSetLayout) == VK_SUCCESS;
+}
+
+bool VulkanRenderer::createPipelineLayout() {
+  VkPushConstantRange pushRange{};
+  pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  pushRange.offset = 0;
+  pushRange.size = sizeof(float) * 2;
+
+  VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+  pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  pipelineLayoutInfo.setLayoutCount = 1;
+  pipelineLayoutInfo.pSetLayouts = &m_descriptorSetLayout;
+  pipelineLayoutInfo.pushConstantRangeCount = 1;
+  pipelineLayoutInfo.pPushConstantRanges = &pushRange;
+
+  return vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr,
+                                &m_pipelineLayout) == VK_SUCCESS;
+}
+
 bool VulkanRenderer::createPipeline() {
   QByteArray vertCode = loadShaderBytes(terminalVertexShaderPath());
   QByteArray fragCode = loadShaderBytes(terminalFragmentShaderPath());
-  if (vertCode.isEmpty() || fragCode.isEmpty()) {
-    return false;
-  }
+  if (vertCode.isEmpty() || fragCode.isEmpty()) return false;
 
   VkShaderModule vertModule = createShaderModule(vertCode);
   VkShaderModule fragModule = createShaderModule(fragCode);
-  if (!vertModule || !fragModule) {
-    return false;
-  }
+  if (!vertModule || !fragModule) return false;
 
   VkPipelineShaderStageCreateInfo vertStage{};
   vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -628,25 +654,16 @@ bool VulkanRenderer::createPipeline() {
   VkPipelineShaderStageCreateInfo stages[] = {vertStage, fragStage};
 
   VkVertexInputBindingDescription bindings[2] = {};
-  bindings[0].binding = 0;
-  bindings[0].stride = sizeof(TerminalQuadVertex);
-  bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-  bindings[1].binding = 1;
-  bindings[1].stride = sizeof(TerminalQuadInstance);
-  bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+  bindings[0] = {0, sizeof(TerminalQuadVertex),   VK_VERTEX_INPUT_RATE_VERTEX};
+  bindings[1] = {1, sizeof(TerminalQuadInstance), VK_VERTEX_INPUT_RATE_INSTANCE};
 
   VkVertexInputAttributeDescription attributes[6] = {};
   attributes[0] = {0, 0, VK_FORMAT_R32G32_SFLOAT, 0};
-  attributes[1] = {1, 1, VK_FORMAT_R32G32_SFLOAT,
-                   static_cast<uint32_t>(offsetof(TerminalQuadInstance, posX))};
-  attributes[2] = {2, 1, VK_FORMAT_R32G32_SFLOAT,
-                   static_cast<uint32_t>(offsetof(TerminalQuadInstance, sizeX))};
-  attributes[3] = {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
-                   static_cast<uint32_t>(offsetof(TerminalQuadInstance, uvMinX))};
-  attributes[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
-                   static_cast<uint32_t>(offsetof(TerminalQuadInstance, fgR))};
-  attributes[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
-                   static_cast<uint32_t>(offsetof(TerminalQuadInstance, bgR))};
+  attributes[1] = {1, 1, VK_FORMAT_R32G32_SFLOAT,         static_cast<uint32_t>(offsetof(TerminalQuadInstance, posX))};
+  attributes[2] = {2, 1, VK_FORMAT_R32G32_SFLOAT,         static_cast<uint32_t>(offsetof(TerminalQuadInstance, sizeX))};
+  attributes[3] = {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT,   static_cast<uint32_t>(offsetof(TerminalQuadInstance, uvMinX))};
+  attributes[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT,   static_cast<uint32_t>(offsetof(TerminalQuadInstance, fgR))};
+  attributes[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT,   static_cast<uint32_t>(offsetof(TerminalQuadInstance, bgR))};
 
   VkPipelineVertexInputStateCreateInfo vertexInput{};
   vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -658,18 +675,13 @@ bool VulkanRenderer::createPipeline() {
   VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
   inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
   inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-  inputAssembly.primitiveRestartEnable = VK_FALSE;
 
   VkViewport viewport{};
-  viewport.x = 0.0f;
-  viewport.y = 0.0f;
-  viewport.width = static_cast<float>(m_swapchainExtent.width);
+  viewport.width  = static_cast<float>(m_swapchainExtent.width);
   viewport.height = static_cast<float>(m_swapchainExtent.height);
-  viewport.minDepth = 0.0f;
   viewport.maxDepth = 1.0f;
 
   VkRect2D scissor{};
-  scissor.offset = {0, 0};
   scissor.extent = m_swapchainExtent;
 
   VkPipelineViewportStateCreateInfo viewportState{};
@@ -691,57 +703,22 @@ bool VulkanRenderer::createPipeline() {
   multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
   VkPipelineColorBlendAttachmentState blendAttachment{};
-  blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                                   VK_COLOR_COMPONENT_G_BIT |
-                                   VK_COLOR_COMPONENT_B_BIT |
-                                   VK_COLOR_COMPONENT_A_BIT;
-  blendAttachment.blendEnable = VK_TRUE;
+  blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                                 | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  blendAttachment.blendEnable         = VK_TRUE;
   blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
   blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-  blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+  blendAttachment.colorBlendOp        = VK_BLEND_OP_ADD;
   blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
   blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-  blendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+  blendAttachment.alphaBlendOp        = VK_BLEND_OP_ADD;
 
   VkPipelineColorBlendStateCreateInfo blendState{};
   blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
   blendState.attachmentCount = 1;
   blendState.pAttachments = &blendAttachment;
 
-  if (m_descriptorSetLayout == VK_NULL_HANDLE) {
-    VkDescriptorSetLayoutBinding samplerBinding{};
-    samplerBinding.binding = 0;
-    samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    samplerBinding.descriptorCount = 1;
-    samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &samplerBinding;
-
-    if (vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr,
-                                    &m_descriptorSetLayout) != VK_SUCCESS) {
-      return false;
-    }
-  }
-
-  VkPushConstantRange pushRange{};
-  pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-  pushRange.offset = 0;
-  pushRange.size = sizeof(float) * 2;
-
-  VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-  pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  pipelineLayoutInfo.setLayoutCount = 1;
-  pipelineLayoutInfo.pSetLayouts = &m_descriptorSetLayout;
-  pipelineLayoutInfo.pushConstantRangeCount = 1;
-  pipelineLayoutInfo.pPushConstantRanges = &pushRange;
-
-  if (vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr,
-                             &m_pipelineLayout) != VK_SUCCESS) {
-    return false;
-  }
+  if (!createDescriptorSetLayout() || !createPipelineLayout()) return false;
 
   VkGraphicsPipelineCreateInfo pipelineInfo{};
   pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -757,13 +734,10 @@ bool VulkanRenderer::createPipeline() {
   pipelineInfo.renderPass = m_renderPass;
   pipelineInfo.subpass = 0;
 
-  bool ok = vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1,
-                                      &pipelineInfo, nullptr, &m_pipeline) ==
-            VK_SUCCESS;
-
+  const bool ok = vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1,
+                                            &pipelineInfo, nullptr, &m_pipeline) == VK_SUCCESS;
   vkDestroyShaderModule(m_device, vertModule, nullptr);
   vkDestroyShaderModule(m_device, fragModule, nullptr);
-
   return ok;
 }
 
@@ -816,125 +790,70 @@ bool VulkanRenderer::createCommandBuffers() {
                                   m_commandBuffers.data()) == VK_SUCCESS;
 }
 
-bool VulkanRenderer::createBuffers() {
+bool VulkanRenderer::createVertexBuffer() {
   VkBufferCreateInfo vertexInfo{};
   vertexInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   vertexInfo.size = sizeof(kTerminalQuadVertices);
   vertexInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
   vertexInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  if (vkCreateBuffer(m_device, &vertexInfo, nullptr, &m_vertexBuffer) !=
-      VK_SUCCESS) {
+  if (vkCreateBuffer(m_device, &vertexInfo, nullptr, &m_vertexBuffer) != VK_SUCCESS)
     return false;
-  }
 
   VkMemoryRequirements requirements{};
   vkGetBufferMemoryRequirements(m_device, m_vertexBuffer, &requirements);
   VkMemoryAllocateInfo allocInfo{};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = requirements.size;
-  allocInfo.memoryTypeIndex =
-      findMemoryType(requirements.memoryTypeBits,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-  if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_vertexMemory) !=
-      VK_SUCCESS) {
+  if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_vertexMemory) != VK_SUCCESS)
     return false;
-  }
 
   vkBindBufferMemory(m_device, m_vertexBuffer, m_vertexMemory, 0);
   void *mapped = nullptr;
   vkMapMemory(m_device, m_vertexMemory, 0, vertexInfo.size, 0, &mapped);
   memcpy(mapped, kTerminalQuadVertices, vertexInfo.size);
   vkUnmapMemory(m_device, m_vertexMemory);
+  return true;
+}
 
+bool VulkanRenderer::createInstanceBuffer() {
   VkBufferCreateInfo instanceInfo{};
   instanceInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   instanceInfo.size = sizeof(TerminalQuadInstance) * 4;
   instanceInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
   instanceInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  if (vkCreateBuffer(m_device, &instanceInfo, nullptr, &m_instanceBuffer) !=
-      VK_SUCCESS) {
+  if (vkCreateBuffer(m_device, &instanceInfo, nullptr, &m_instanceBuffer) != VK_SUCCESS)
     return false;
-  }
 
+  VkMemoryRequirements requirements{};
   vkGetBufferMemoryRequirements(m_device, m_instanceBuffer, &requirements);
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = requirements.size;
-  allocInfo.memoryTypeIndex =
-      findMemoryType(requirements.memoryTypeBits,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-  if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_instanceMemory) !=
-      VK_SUCCESS) {
+  if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_instanceMemory) != VK_SUCCESS)
     return false;
-  }
 
   vkBindBufferMemory(m_device, m_instanceBuffer, m_instanceMemory, 0);
   m_instanceCapacity = instanceInfo.size / sizeof(TerminalQuadInstance);
-
   return true;
 }
 
-bool VulkanRenderer::createAtlas() {
-  if (m_atlasImageCpu.isNull()) {
-    return false;
-  }
+bool VulkanRenderer::createBuffers() {
+  return createVertexBuffer() && createInstanceBuffer();
+}
 
-  const uint32_t width = static_cast<uint32_t>(m_atlasImageCpu.width());
-  const uint32_t height = static_cast<uint32_t>(m_atlasImageCpu.height());
-  const uint32_t rowLength =
-      static_cast<uint32_t>(m_atlasImageCpu.bytesPerLine());
-  const VkDeviceSize imageSize =
-      static_cast<VkDeviceSize>(m_atlasImageCpu.sizeInBytes());
-
-  VkBuffer stagingBuffer = VK_NULL_HANDLE;
-  VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-
-  VkBufferCreateInfo stagingInfo{};
-  stagingInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  stagingInfo.size = imageSize;
-  stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-  stagingInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-  if (vkCreateBuffer(m_device, &stagingInfo, nullptr, &stagingBuffer) !=
-      VK_SUCCESS) {
-    return false;
-  }
-
-  VkMemoryRequirements stagingRequirements{};
-  vkGetBufferMemoryRequirements(m_device, stagingBuffer,
-                                &stagingRequirements);
-  VkMemoryAllocateInfo stagingAlloc{};
-  stagingAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  stagingAlloc.allocationSize = stagingRequirements.size;
-  stagingAlloc.memoryTypeIndex =
-      findMemoryType(stagingRequirements.memoryTypeBits,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-  if (vkAllocateMemory(m_device, &stagingAlloc, nullptr, &stagingMemory) !=
-      VK_SUCCESS) {
-    vkDestroyBuffer(m_device, stagingBuffer, nullptr);
-    return false;
-  }
-
-  vkBindBufferMemory(m_device, stagingBuffer, stagingMemory, 0);
-
-  void *mapped = nullptr;
-  vkMapMemory(m_device, stagingMemory, 0, imageSize, 0, &mapped);
-  memcpy(mapped, m_atlasImageCpu.constBits(),
-         static_cast<size_t>(imageSize));
-  vkUnmapMemory(m_device, stagingMemory);
-
+bool VulkanRenderer::createAtlasImage(uint32_t width, uint32_t height) {
   VkImageCreateInfo imageInfo{};
   imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   imageInfo.imageType = VK_IMAGE_TYPE_2D;
-  imageInfo.extent.width = width;
-  imageInfo.extent.height = height;
-  imageInfo.extent.depth = 1;
+  imageInfo.extent = {width, height, 1};
   imageInfo.mipLevels = 1;
   imageInfo.arrayLayers = 1;
   imageInfo.format = VK_FORMAT_R8_UNORM;
@@ -944,57 +863,36 @@ bool VulkanRenderer::createAtlas() {
   imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
   imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  if (vkCreateImage(m_device, &imageInfo, nullptr, &m_atlasImage) !=
-      VK_SUCCESS) {
+  if (vkCreateImage(m_device, &imageInfo, nullptr, &m_atlasImage) != VK_SUCCESS)
     return false;
-  }
 
   VkMemoryRequirements requirements{};
   vkGetImageMemoryRequirements(m_device, m_atlasImage, &requirements);
   VkMemoryAllocateInfo allocInfo{};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = requirements.size;
-  allocInfo.memoryTypeIndex =
-      findMemoryType(requirements.memoryTypeBits,
-                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
+                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-  if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_atlasMemory) !=
-      VK_SUCCESS) {
-    vkDestroyBuffer(m_device, stagingBuffer, nullptr);
-    vkFreeMemory(m_device, stagingMemory, nullptr);
+  if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_atlasMemory) != VK_SUCCESS)
     return false;
-  }
 
   vkBindImageMemory(m_device, m_atlasImage, m_atlasMemory, 0);
+  return true;
+}
 
-  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
-  transitionImageLayout(commandBuffer, m_atlasImage, VK_IMAGE_LAYOUT_UNDEFINED,
-                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  copyBufferToImage(commandBuffer, stagingBuffer, m_atlasImage, {width, height, rowLength});
-  transitionImageLayout(commandBuffer, m_atlasImage,
-                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-  endSingleTimeCommands(commandBuffer);
-
-  vkDestroyBuffer(m_device, stagingBuffer, nullptr);
-  vkFreeMemory(m_device, stagingMemory, nullptr);
-
+bool VulkanRenderer::createAtlasView() {
   VkImageViewCreateInfo viewInfo{};
   viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   viewInfo.image = m_atlasImage;
   viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
   viewInfo.format = VK_FORMAT_R8_UNORM;
-  viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  viewInfo.subresourceRange.baseMipLevel = 0;
-  viewInfo.subresourceRange.levelCount = 1;
-  viewInfo.subresourceRange.baseArrayLayer = 0;
-  viewInfo.subresourceRange.layerCount = 1;
+  viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
-  if (vkCreateImageView(m_device, &viewInfo, nullptr, &m_atlasView) !=
-      VK_SUCCESS) {
-    return false;
-  }
+  return vkCreateImageView(m_device, &viewInfo, nullptr, &m_atlasView) == VK_SUCCESS;
+}
 
+bool VulkanRenderer::createAtlasSampler() {
   VkSamplerCreateInfo samplerInfo{};
   samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
   samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -1003,8 +901,45 @@ bool VulkanRenderer::createAtlas() {
   samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
   samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 
-  return vkCreateSampler(m_device, &samplerInfo, nullptr, &m_atlasSampler) ==
-         VK_SUCCESS;
+  return vkCreateSampler(m_device, &samplerInfo, nullptr, &m_atlasSampler) == VK_SUCCESS;
+}
+
+bool VulkanRenderer::createAtlas() {
+  if (m_atlasImageCpu.isNull()) return false;
+
+  const uint32_t width     = static_cast<uint32_t>(m_atlasImageCpu.width());
+  const uint32_t height    = static_cast<uint32_t>(m_atlasImageCpu.height());
+  const uint32_t rowLength = static_cast<uint32_t>(m_atlasImageCpu.bytesPerLine());
+  const VkDeviceSize imageSize = static_cast<VkDeviceSize>(m_atlasImageCpu.sizeInBytes());
+
+  VkBuffer stagingBuffer = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+  if (!allocateStagingBuffer(imageSize, stagingBuffer, stagingMemory)) return false;
+
+  vkBindBufferMemory(m_device, stagingBuffer, stagingMemory, 0);
+  void *mapped = nullptr;
+  vkMapMemory(m_device, stagingMemory, 0, imageSize, 0, &mapped);
+  memcpy(mapped, m_atlasImageCpu.constBits(), static_cast<size_t>(imageSize));
+  vkUnmapMemory(m_device, stagingMemory);
+
+  if (!createAtlasImage(width, height)) {
+    vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+    vkFreeMemory(m_device, stagingMemory, nullptr);
+    return false;
+  }
+
+  VkCommandBuffer cmd = beginSingleTimeCommands();
+  transitionImageLayout(cmd, m_atlasImage, VK_IMAGE_LAYOUT_UNDEFINED,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  copyBufferToImage(cmd, stagingBuffer, m_atlasImage, {width, height, rowLength});
+  transitionImageLayout(cmd, m_atlasImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  endSingleTimeCommands(cmd);
+
+  vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+  vkFreeMemory(m_device, stagingMemory, nullptr);
+
+  return createAtlasView() && createAtlasSampler();
 }
 
 bool VulkanRenderer::createDescriptorSet() {
@@ -1112,35 +1047,30 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   vkEndCommandBuffer(cmd);
 }
 
-void VulkanRenderer::preRasterizeGlyphRanges(QPainter &painter, int &x, int &y, int atlasWidth, int atlasHeight) {
-  const int cellWidth = m_cellSize.width();
+void VulkanRenderer::insertGlyphAt(QPainter &painter, uint codepoint, int &x, int &y,
+                                   int atlasWidth, int atlasHeight,
+                                   const QFontMetrics &metrics) {
+  const int cellWidth  = m_cellSize.width();
   const int cellHeight = m_cellSize.height();
+
+  if (x + cellWidth > atlasWidth) { x = 0; y += cellHeight; }
+  if (y + cellHeight > atlasHeight) return;
+  if (m_glyphs.contains(codepoint)) return;
+
+  painter.drawText(QPoint(x, y + metrics.ascent()), QString(QChar(codepoint)));
+
+  GlyphInfo glyph{};
+  glyph.uvMinX = static_cast<float>(x)            / atlasWidth;
+  glyph.uvMinY = static_cast<float>(y)            / atlasHeight;
+  glyph.uvMaxX = static_cast<float>(x + cellWidth)  / atlasWidth;
+  glyph.uvMaxY = static_cast<float>(y + cellHeight) / atlasHeight;
+  m_glyphs.insert(codepoint, glyph);
+
+  x += cellWidth;
+}
+
+void VulkanRenderer::preRasterizeGlyphRanges(QPainter &painter, int &x, int &y, int atlasWidth, int atlasHeight) {
   QFontMetrics metrics(painter.font());
-
-  auto insertGlyph = [&](uint codepoint) {
-    if (x + cellWidth > atlasWidth) {
-      x = 0;
-      y += cellHeight;
-    }
-    if (y + cellHeight > atlasHeight) {
-      return;
-    }
-    if (m_glyphs.contains(codepoint)) {
-      return;
-    }
-
-    QPoint baseline(x, y + metrics.ascent());
-    painter.drawText(baseline, QString(QChar(codepoint)));
-
-    GlyphInfo glyph{};
-    glyph.uvMinX = static_cast<float>(x) / atlasWidth;
-    glyph.uvMinY = static_cast<float>(y) / atlasHeight;
-    glyph.uvMaxX = static_cast<float>(x + cellWidth) / atlasWidth;
-    glyph.uvMaxY = static_cast<float>(y + cellHeight) / atlasHeight;
-    m_glyphs.insert(codepoint, glyph);
-
-    x += cellWidth;
-  };
 
   struct Range { uint start; uint end; };
   static const Range ranges[] = {
@@ -1152,44 +1082,44 @@ void VulkanRenderer::preRasterizeGlyphRanges(QPainter &painter, int &x, int &y, 
   };
 
   for (const Range &range : ranges) {
-    for (uint cp = range.start; cp <= range.end; ++cp) {
-      insertGlyph(cp);
-    }
+    for (uint cp = range.start; cp <= range.end; ++cp)
+      insertGlyphAt(painter, cp, x, y, atlasWidth, atlasHeight, metrics);
   }
+}
+
+void VulkanRenderer::rasterizeBoldGlyph(QPainter &painter, uint cp,
+                                        const QFontMetrics &metrics,
+                                        int atlasWidth, int atlasHeight) {
+  const int cellWidth  = m_cellSize.width();
+  const int cellHeight = m_cellSize.height();
+  const uint boldKey   = cp | 0x80000000u;
+
+  if (m_glyphs.contains(boldKey)) return;
+  if (m_atlasCursorX + cellWidth > atlasWidth) {
+    m_atlasCursorX = 0;
+    m_atlasCursorY += cellHeight;
+  }
+  if (m_atlasCursorY + cellHeight > atlasHeight) return;
+
+  painter.drawText(QPoint(m_atlasCursorX, m_atlasCursorY + metrics.ascent()),
+                   QString(QChar(cp)));
+
+  GlyphInfo glyph{};
+  glyph.uvMinX = static_cast<float>(m_atlasCursorX)             / atlasWidth;
+  glyph.uvMinY = static_cast<float>(m_atlasCursorY)             / atlasHeight;
+  glyph.uvMaxX = static_cast<float>(m_atlasCursorX + cellWidth)  / atlasWidth;
+  glyph.uvMaxY = static_cast<float>(m_atlasCursorY + cellHeight) / atlasHeight;
+  m_glyphs.insert(boldKey, glyph);
+
+  m_atlasCursorX += cellWidth;
 }
 
 void VulkanRenderer::preRasterizeBoldGlyphs(QPainter &painter, const QFont &boldFont, int atlasWidth, int atlasHeight) {
   painter.setFont(boldFont);
   QFontMetrics boldMetrics(boldFont);
-  const int cellWidth = m_cellSize.width();
-  const int cellHeight = m_cellSize.height();
 
-  QList<uint> regularKeys = m_glyphs.keys();
-  for (uint cp : regularKeys) {
-    uint boldKey = cp | 0x80000000u;
-    if (m_glyphs.contains(boldKey)) {
-      continue;
-    }
-    if (m_atlasCursorX + cellWidth > atlasWidth) {
-      m_atlasCursorX = 0;
-      m_atlasCursorY += cellHeight;
-    }
-    if (m_atlasCursorY + cellHeight > atlasHeight) {
-      break;
-    }
-
-    QPoint baseline(m_atlasCursorX, m_atlasCursorY + boldMetrics.ascent());
-    painter.drawText(baseline, QString(QChar(cp)));
-
-    GlyphInfo glyph{};
-    glyph.uvMinX = static_cast<float>(m_atlasCursorX) / atlasWidth;
-    glyph.uvMinY = static_cast<float>(m_atlasCursorY) / atlasHeight;
-    glyph.uvMaxX = static_cast<float>(m_atlasCursorX + cellWidth) / atlasWidth;
-    glyph.uvMaxY = static_cast<float>(m_atlasCursorY + cellHeight) / atlasHeight;
-    m_glyphs.insert(boldKey, glyph);
-
-    m_atlasCursorX += cellWidth;
-  }
+  for (uint cp : m_glyphs.keys())
+    rasterizeBoldGlyph(painter, cp, boldMetrics, atlasWidth, atlasHeight);
 }
 
 void VulkanRenderer::buildGlyphAtlas(const QFont &font) {
@@ -1266,120 +1196,109 @@ bool VulkanRenderer::rasterizeGlyph(uint codepoint, bool bold) {
   return true;
 }
 
-void VulkanRenderer::reuploadAtlas() {
-  if (!m_atlasDirty || !m_device || m_atlasImageCpu.isNull()) {
-    return;
-  }
-  m_atlasDirty = false;
-
-  const uint32_t width = static_cast<uint32_t>(m_atlasImageCpu.width());
-  const uint32_t height = static_cast<uint32_t>(m_atlasImageCpu.height());
-  const uint32_t rowLength =
-      static_cast<uint32_t>(m_atlasImageCpu.bytesPerLine());
-  const VkDeviceSize imageSize =
-      static_cast<VkDeviceSize>(m_atlasImageCpu.sizeInBytes());
-
-  VkBuffer stagingBuffer = VK_NULL_HANDLE;
-  VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-
+bool VulkanRenderer::allocateStagingBuffer(VkDeviceSize imageSize,
+                                            VkBuffer &stagingBuffer,
+                                            VkDeviceMemory &stagingMemory) {
   VkBufferCreateInfo stagingInfo{};
   stagingInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   stagingInfo.size = imageSize;
   stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
   stagingInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  if (vkCreateBuffer(m_device, &stagingInfo, nullptr, &stagingBuffer) !=
-      VK_SUCCESS) {
-    return;
-  }
+  if (vkCreateBuffer(m_device, &stagingInfo, nullptr, &stagingBuffer) != VK_SUCCESS)
+    return false;
 
   VkMemoryRequirements stagingReqs{};
   vkGetBufferMemoryRequirements(m_device, stagingBuffer, &stagingReqs);
   VkMemoryAllocateInfo stagingAlloc{};
   stagingAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   stagingAlloc.allocationSize = stagingReqs.size;
-  stagingAlloc.memoryTypeIndex =
-      findMemoryType(stagingReqs.memoryTypeBits,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  stagingAlloc.memoryTypeIndex = findMemoryType(stagingReqs.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-  if (vkAllocateMemory(m_device, &stagingAlloc, nullptr, &stagingMemory) !=
-      VK_SUCCESS) {
+  if (vkAllocateMemory(m_device, &stagingAlloc, nullptr, &stagingMemory) != VK_SUCCESS) {
     vkDestroyBuffer(m_device, stagingBuffer, nullptr);
-    return;
+    return false;
   }
+  return true;
+}
 
-  vkBindBufferMemory(m_device, stagingBuffer, stagingMemory, 0);
-
-  void *mapped = nullptr;
-  vkMapMemory(m_device, stagingMemory, 0, imageSize, 0, &mapped);
-  memcpy(mapped, m_atlasImageCpu.constBits(),
-         static_cast<size_t>(imageSize));
-  vkUnmapMemory(m_device, stagingMemory);
-
+void VulkanRenderer::uploadStagingToAtlas(VkBuffer stagingBuffer,
+                                          const BufferCopyRegion &region) {
   VkCommandBuffer cmd = beginSingleTimeCommands();
-  transitionImageLayout(cmd, m_atlasImage,
-                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+  transitionImageLayout(cmd, m_atlasImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  copyBufferToImage(cmd, stagingBuffer, m_atlasImage, {width, height, rowLength});
-  transitionImageLayout(cmd, m_atlasImage,
-                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+  copyBufferToImage(cmd, stagingBuffer, m_atlasImage, region);
+  transitionImageLayout(cmd, m_atlasImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   endSingleTimeCommands(cmd);
+}
+
+void VulkanRenderer::reuploadAtlas() {
+  if (!m_atlasDirty || !m_device || m_atlasImageCpu.isNull()) return;
+  m_atlasDirty = false;
+
+  const uint32_t width     = static_cast<uint32_t>(m_atlasImageCpu.width());
+  const uint32_t height    = static_cast<uint32_t>(m_atlasImageCpu.height());
+  const uint32_t rowLength = static_cast<uint32_t>(m_atlasImageCpu.bytesPerLine());
+  const VkDeviceSize imageSize = static_cast<VkDeviceSize>(m_atlasImageCpu.sizeInBytes());
+
+  VkBuffer stagingBuffer = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+  if (!allocateStagingBuffer(imageSize, stagingBuffer, stagingMemory)) return;
+
+  vkBindBufferMemory(m_device, stagingBuffer, stagingMemory, 0);
+  void *mapped = nullptr;
+  vkMapMemory(m_device, stagingMemory, 0, imageSize, 0, &mapped);
+  memcpy(mapped, m_atlasImageCpu.constBits(), static_cast<size_t>(imageSize));
+  vkUnmapMemory(m_device, stagingMemory);
+
+  uploadStagingToAtlas(stagingBuffer, {width, height, rowLength});
 
   vkDestroyBuffer(m_device, stagingBuffer, nullptr);
   vkFreeMemory(m_device, stagingMemory, nullptr);
 }
 
-void VulkanRenderer::updateInstanceBuffer() {
-  if (m_instanceBuffer == VK_NULL_HANDLE) {
-    return;
-  }
+bool VulkanRenderer::growInstanceBuffer(size_t needed) {
+  vkDeviceWaitIdle(m_device);
+  vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
+  vkFreeMemory(m_device, m_instanceMemory, nullptr);
+  m_instanceBuffer = VK_NULL_HANDLE;
+  m_instanceMemory = VK_NULL_HANDLE;
 
-  if (m_instances.isEmpty()) {
-    return;
-  }
+  VkBufferCreateInfo bufInfo{};
+  bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufInfo.size = needed * sizeof(TerminalQuadInstance);
+  bufInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  // Grow buffer if needed
-  size_t needed = static_cast<size_t>(m_instances.size());
-  if (needed > m_instanceCapacity) {
-    vkDeviceWaitIdle(m_device);
+  if (vkCreateBuffer(m_device, &bufInfo, nullptr, &m_instanceBuffer) != VK_SUCCESS)
+    return false;
+
+  VkMemoryRequirements requirements{};
+  vkGetBufferMemoryRequirements(m_device, m_instanceBuffer, &requirements);
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = requirements.size;
+  allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+  if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_instanceMemory) != VK_SUCCESS) {
     vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
-    vkFreeMemory(m_device, m_instanceMemory, nullptr);
     m_instanceBuffer = VK_NULL_HANDLE;
-    m_instanceMemory = VK_NULL_HANDLE;
-
-    VkBufferCreateInfo bufInfo{};
-    bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufInfo.size = needed * sizeof(TerminalQuadInstance);
-    bufInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (vkCreateBuffer(m_device, &bufInfo, nullptr, &m_instanceBuffer) !=
-        VK_SUCCESS) {
-      return;
-    }
-
-    VkMemoryRequirements requirements{};
-    vkGetBufferMemoryRequirements(m_device, m_instanceBuffer, &requirements);
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = requirements.size;
-    allocInfo.memoryTypeIndex =
-        findMemoryType(requirements.memoryTypeBits,
-                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_instanceMemory) !=
-        VK_SUCCESS) {
-      vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
-      m_instanceBuffer = VK_NULL_HANDLE;
-      return;
-    }
-
-    vkBindBufferMemory(m_device, m_instanceBuffer, m_instanceMemory, 0);
-    m_instanceCapacity = needed;
+    return false;
   }
+
+  vkBindBufferMemory(m_device, m_instanceBuffer, m_instanceMemory, 0);
+  m_instanceCapacity = needed;
+  return true;
+}
+
+void VulkanRenderer::updateInstanceBuffer() {
+  if (m_instanceBuffer == VK_NULL_HANDLE || m_instances.isEmpty()) return;
+
+  const size_t needed = static_cast<size_t>(m_instances.size());
+  if (needed > m_instanceCapacity && !growInstanceBuffer(needed)) return;
 
   void *data = nullptr;
   const size_t size = m_instances.size() * sizeof(TerminalQuadInstance);
