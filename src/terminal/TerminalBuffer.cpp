@@ -29,6 +29,38 @@ void TerminalBuffer::clearLine() {
   clampCursor();
 }
 
+void TerminalBuffer::clearLineToEnd() {
+  if (m_cursorRow < 0 || m_cursorRow >= m_screen.size()) {
+    return;
+  }
+  auto &line = m_screen[m_cursorRow];
+  for (int col = m_cursorColumn; col < line.size(); ++col) {
+    line[col] = Cell{QLatin1Char(' '), m_currentFg, m_currentBg};
+  }
+}
+
+void TerminalBuffer::clearLineFromStart() {
+  if (m_cursorRow < 0 || m_cursorRow >= m_screen.size()) {
+    return;
+  }
+  auto &line = m_screen[m_cursorRow];
+  for (int col = 0; col <= qMin(m_cursorColumn, line.size() - 1); ++col) {
+    line[col] = Cell{QLatin1Char(' '), m_currentFg, m_currentBg};
+  }
+}
+
+void TerminalBuffer::clearToEnd() {
+  if (m_cursorRow >= 0 && m_cursorRow < m_screen.size()) {
+    auto &line = m_screen[m_cursorRow];
+    for (int col = m_cursorColumn; col < line.size(); ++col) {
+      line[col] = Cell{QLatin1Char(' '), m_currentFg, m_currentBg};
+    }
+  }
+  for (int row = m_cursorRow + 1; row < m_screen.size(); ++row) {
+    m_screen[row] = blankRow(m_currentFg, m_currentBg);
+  }
+}
+
 void TerminalBuffer::setScrollbackLimit(int lines) {
   m_scrollbackLimit = qMax(0, lines);
   while (m_scrollback.size() > m_scrollbackLimit) {
@@ -90,8 +122,9 @@ QColor TerminalBuffer::defaultBackground() const {
 }
 
 void TerminalBuffer::putChar(QChar ch) {
-  if (m_cursorColumn >= m_columns) {
+  if (m_pendingWrap) {
     newline();
+    m_pendingWrap = false;
   }
   if (m_cursorRow < 0 || m_cursorRow >= m_screen.size()) {
     return;
@@ -114,7 +147,8 @@ void TerminalBuffer::putChar(QChar ch) {
   m_screen[m_cursorRow][m_cursorColumn] = cell;
   m_cursorColumn++;
   if (m_cursorColumn >= m_columns) {
-    newline();
+    m_pendingWrap = true;
+    m_cursorColumn = m_columns - 1;
   }
 }
 
@@ -130,24 +164,53 @@ void TerminalBuffer::newline() {
 }
 
 void TerminalBuffer::carriageReturn() {
+  m_pendingWrap = false;
   m_cursorColumn = 0;
 }
 
 void TerminalBuffer::backspace() {
+  m_pendingWrap = false;
   if (m_cursorColumn > 0) {
     m_cursorColumn--;
   }
 }
 
 void TerminalBuffer::tab() {
+  m_pendingWrap = false;
   const int tabStop = 8;
   const int nextStop = ((m_cursorColumn / tabStop) + 1) * tabStop;
   m_cursorColumn = qMin(nextStop, m_columns - 1);
 }
 
 void TerminalBuffer::setCursorPosition(int row, int column) {
+  m_pendingWrap = false;
   m_cursorRow = qBound(0, row, m_rows - 1);
   m_cursorColumn = qBound(0, column, m_columns - 1);
+}
+
+void TerminalBuffer::cursorUp(int n) {
+  m_pendingWrap = false;
+  m_cursorRow = qMax(0, m_cursorRow - qMax(1, n));
+}
+
+void TerminalBuffer::cursorDown(int n) {
+  m_pendingWrap = false;
+  m_cursorRow = qMin(m_rows - 1, m_cursorRow + qMax(1, n));
+}
+
+void TerminalBuffer::cursorForward(int n) {
+  m_pendingWrap = false;
+  m_cursorColumn = qMin(m_columns - 1, m_cursorColumn + qMax(1, n));
+}
+
+void TerminalBuffer::cursorBack(int n) {
+  m_pendingWrap = false;
+  m_cursorColumn = qMax(0, m_cursorColumn - qMax(1, n));
+}
+
+void TerminalBuffer::cursorToColumn(int col) {
+  m_pendingWrap = false;
+  m_cursorColumn = qBound(0, col, m_columns - 1);
 }
 
 int TerminalBuffer::cursorRow() const {

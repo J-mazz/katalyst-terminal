@@ -122,14 +122,31 @@ void applySgrParams(QList<int> &params, TerminalBuffer *buffer) {
 }
 
 void handleCsiCommand(VtParserCore *core, TerminalBuffer *buffer, char command) {
+  auto param = [&](int index, int def) {
+    return (index < core->params.size() && core->params[index] > 0)
+               ? core->params[index] : def;
+  };
   switch (command) {
+    case 'A': buffer->cursorUp(param(0, 1));           break;
+    case 'B': buffer->cursorDown(param(0, 1));          break;
+    case 'C': buffer->cursorForward(param(0, 1));       break;
+    case 'D': buffer->cursorBack(param(0, 1));          break;
+    case 'G': buffer->cursorToColumn(param(0, 1) - 1); break;
+    case 'f': // fallthrough — same as H
+    case 'H': handleCursorPosition(core, buffer);       break;
     case 'J': {
-      int mode = core->params.isEmpty() ? 0 : core->params.first();
-      if (mode == 0 || mode == 2) buffer->clear();
+      const int mode = core->params.isEmpty() ? 0 : core->params.first();
+      if      (mode == 0) buffer->clearToEnd();
+      else if (mode == 2) buffer->clear();
       break;
     }
-    case 'H': handleCursorPosition(core, buffer); break;
-    case 'K': buffer->clearLine(); break;
+    case 'K': {
+      const int mode = core->params.isEmpty() ? 0 : core->params.first();
+      if      (mode == 0) buffer->clearLineToEnd();
+      else if (mode == 1) buffer->clearLineFromStart();
+      else if (mode == 2) buffer->clearLine();
+      break;
+    }
     case 'm': applySgrParams(core->params, buffer); break;
     default: break;
   }

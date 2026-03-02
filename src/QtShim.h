@@ -142,7 +142,10 @@ public:
 
 	void resize(int columns, int rows);
 	void clear();
+	void clearToEnd();
 	void clearLine();
+	void clearLineToEnd();
+	void clearLineFromStart();
 
 	void setScrollbackLimit(int lines);
 	void setDefaultColors(const QColor &foreground, const QColor &background);
@@ -166,6 +169,11 @@ public:
 	void tab();
 
 	void setCursorPosition(int row, int column);
+	void cursorUp(int n);
+	void cursorDown(int n);
+	void cursorForward(int n);
+	void cursorBack(int n);
+	void cursorToColumn(int col);
 	int cursorRow() const;
 	int cursorColumn() const;
 
@@ -205,6 +213,7 @@ private:
 	bool m_currentUnderline = false;
 	bool m_currentStrikethrough = false;
 	bool m_currentInverse = false;
+	bool m_pendingWrap = false;
 
 	QVector<QVector<Cell>> m_scrollback;
 	QVector<QVector<Cell>> m_screen;
