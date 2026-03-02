@@ -14,50 +14,50 @@ void TerminalBuffer::resize(int columns, int rows) {
 
 void TerminalBuffer::clear() {
   m_scrollback.clear();
-  for (auto &line : m_screen) {
-    line = blankRow(m_currentFg, m_currentBg);
+  for (int i = 0; i < m_rows; ++i) {
+    screenRow(i) = blankRow(m_currentFg, m_currentBg);
   }
   m_cursorRow = 0;
   m_cursorColumn = 0;
 }
 
 void TerminalBuffer::clearLine() {
-  if (m_cursorRow < 0 || m_cursorRow >= m_screen.size()) {
+  if (m_cursorRow < 0 || m_cursorRow >= m_rows) {
     return;
   }
-  m_screen[m_cursorRow] = blankRow(m_currentFg, m_currentBg);
+  screenRow(m_cursorRow) = blankRow(m_currentFg, m_currentBg);
   clampCursor();
 }
 
 void TerminalBuffer::clearLineToEnd() {
-  if (m_cursorRow < 0 || m_cursorRow >= m_screen.size()) {
+  if (m_cursorRow < 0 || m_cursorRow >= m_rows) {
     return;
   }
-  auto &line = m_screen[m_cursorRow];
+  auto &line = screenRow(m_cursorRow);
   for (int col = m_cursorColumn; col < line.size(); ++col) {
     line[col] = Cell{QLatin1Char(' '), m_currentFg, m_currentBg};
   }
 }
 
 void TerminalBuffer::clearLineFromStart() {
-  if (m_cursorRow < 0 || m_cursorRow >= m_screen.size()) {
+  if (m_cursorRow < 0 || m_cursorRow >= m_rows) {
     return;
   }
-  auto &line = m_screen[m_cursorRow];
+  auto &line = screenRow(m_cursorRow);
   for (int col = 0; col <= qMin(m_cursorColumn, line.size() - 1); ++col) {
     line[col] = Cell{QLatin1Char(' '), m_currentFg, m_currentBg};
   }
 }
 
 void TerminalBuffer::clearToEnd() {
-  if (m_cursorRow >= 0 && m_cursorRow < m_screen.size()) {
-    auto &line = m_screen[m_cursorRow];
+  if (m_cursorRow >= 0 && m_cursorRow < m_rows) {
+    auto &line = screenRow(m_cursorRow);
     for (int col = m_cursorColumn; col < line.size(); ++col) {
       line[col] = Cell{QLatin1Char(' '), m_currentFg, m_currentBg};
     }
   }
-  for (int row = m_cursorRow + 1; row < m_screen.size(); ++row) {
-    m_screen[row] = blankRow(m_currentFg, m_currentBg);
+  for (int row = m_cursorRow + 1; row < m_rows; ++row) {
+    screenRow(row) = blankRow(m_currentFg, m_currentBg);
   }
 }
 
@@ -126,7 +126,7 @@ void TerminalBuffer::putChar(QChar ch) {
     newline();
     m_pendingWrap = false;
   }
-  if (m_cursorRow < 0 || m_cursorRow >= m_screen.size()) {
+  if (m_cursorRow < 0 || m_cursorRow >= m_rows) {
     return;
   }
 
@@ -144,7 +144,7 @@ void TerminalBuffer::putChar(QChar ch) {
     cell.bg = m_currentBg;
   }
 
-  m_screen[m_cursorRow][m_cursorColumn] = cell;
+  screenRow(m_cursorRow)[m_cursorColumn] = cell;
   m_cursorColumn++;
   if (m_cursorColumn >= m_columns) {
     m_pendingWrap = true;
@@ -155,9 +155,12 @@ void TerminalBuffer::putChar(QChar ch) {
 void TerminalBuffer::newline() {
   m_cursorColumn = 0;
   if (m_cursorRow == m_rows - 1) {
-    pushScrollback(m_screen.front());
-    m_screen.pop_front();
-    m_screen.push_back(blankRow(m_currentFg, m_currentBg));
+    // Ring buffer scroll: push logical row 0 to scrollback, overwrite it with a
+    // blank row, then advance the ring start so the old row 0 becomes the new
+    // last row. O(cols) — no element shifting.
+    pushScrollback(screenRow(0));
+    screenRow(0) = blankRow(m_currentFg, m_currentBg);
+    m_screenStart = (m_screenStart + 1) % m_rows;
   } else {
     m_cursorRow++;
   }
@@ -240,7 +243,7 @@ QString TerminalBuffer::lineAt(int index) const {
   if (index < m_scrollback.size()) {
     return lineToString(m_scrollback[index]);
   }
-  return lineToString(m_screen[index - m_scrollback.size()]);
+  return lineToString(screenRow(index - (int)m_scrollback.size()));
 }
 
 TerminalBuffer::Cell TerminalBuffer::cellAt(int index, int column) const {
@@ -248,9 +251,9 @@ TerminalBuffer::Cell TerminalBuffer::cellAt(int index, int column) const {
     return Cell{};
   }
   const QVector<Cell> &line =
-      (index < m_scrollback.size())
+      (index < (int)m_scrollback.size())
           ? m_scrollback[index]
-          : m_screen[index - m_scrollback.size()];
+          : screenRow(index - (int)m_scrollback.size());
   if (column < 0 || column >= line.size()) {
     return Cell{};
   }
@@ -306,8 +309,8 @@ QStringList TerminalBuffer::snapshot(int scrollOffset) const {
   for (const auto &line : m_scrollback) {
     allLines.push_back(lineToString(line));
   }
-  for (const auto &line : m_screen) {
-    allLines.push_back(lineToString(line));
+  for (int i = 0; i < m_rows; ++i) {
+    allLines.push_back(lineToString(screenRow(i)));
   }
 
   int total = allLines.size();
@@ -331,6 +334,17 @@ QVector<TerminalBuffer::Cell> TerminalBuffer::blankRow(const QColor &fg,
 }
 
 void TerminalBuffer::ensureScreenSize() {
+  // Reorder into logical order before resizing so screenRow() accesses remain
+  // valid regardless of current m_screenStart offset.
+  if (m_screenStart != 0 && !m_screen.isEmpty()) {
+    QVector<QVector<Cell>> ordered;
+    ordered.reserve(m_screen.size());
+    for (int i = 0; i < (int)m_screen.size(); ++i) {
+      ordered.push_back(std::move(screenRow(i)));
+    }
+    m_screen = std::move(ordered);
+    m_screenStart = 0;
+  }
   while (m_screen.size() < m_rows) {
     m_screen.push_back(blankRow(m_defaultFg, m_defaultBg));
   }

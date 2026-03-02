@@ -6,6 +6,7 @@
 #pragma once
 
 // --- C++ standard library (included before import std; to avoid redefinition) ---
+#include <deque>
 #include <memory>
 
 // --- Vulkan (must precede Qt Vulkan wrappers) ---
@@ -198,11 +199,19 @@ private:
 	void pushScrollback(const QVector<Cell> &line);
 	QString lineToString(const QVector<Cell> &line) const;
 
+	QVector<Cell>& screenRow(int row) {
+		return m_screen[(m_screenStart + row) % m_rows];
+	}
+	const QVector<Cell>& screenRow(int row) const {
+		return m_screen[(m_screenStart + row) % m_rows];
+	}
+
 	int m_columns = 80;
 	int m_rows = 24;
 	int m_cursorRow = 0;
 	int m_cursorColumn = 0;
 	int m_scrollbackLimit = 2000;
+	int m_screenStart = 0;
 
 	QColor m_defaultFg = QColor(220, 220, 220);
 	QColor m_defaultBg = QColor(20, 22, 26);
@@ -215,7 +224,7 @@ private:
 	bool m_currentInverse = false;
 	bool m_pendingWrap = false;
 
-	QVector<QVector<Cell>> m_scrollback;
+	std::deque<QVector<Cell>> m_scrollback;
 	QVector<QVector<Cell>> m_screen;
 };
 
@@ -589,6 +598,9 @@ private:
 	QFont m_atlasFont;
 	QHash<uint, GlyphInfo> m_glyphs;
 	QVector<TerminalQuadInstance> m_instances;
+	QVector<TerminalQuadInstance> m_cachedInstances;
+	int m_dirtyFirst = 0;
+	int m_dirtyLast = -1;
 	QImage m_atlasImageCpu;
 	int m_atlasCursorX = 0;
 	int m_atlasCursorY = 0;

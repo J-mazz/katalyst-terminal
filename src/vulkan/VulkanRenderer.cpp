@@ -347,6 +347,26 @@ void VulkanRenderer::updateFromBuffer(const TerminalBuffer *buffer,
       addDecorationInstances(cell, instance, fg);
     }
   }
+
+  // Compute dirty range by comparing to cached instances from last frame.
+  const int newCount = m_instances.size();
+  const int oldCount = m_cachedInstances.size();
+  if (newCount != oldCount) {
+    // Size changed (resize or decoration count shift) — entire buffer is dirty.
+    m_dirtyFirst = 0;
+    m_dirtyLast = newCount - 1;
+  } else {
+    m_dirtyFirst = newCount;
+    m_dirtyLast = -1;
+    for (int i = 0; i < newCount; ++i) {
+      if (std::memcmp(&m_instances[i], &m_cachedInstances[i],
+                      sizeof(TerminalQuadInstance)) != 0) {
+        if (m_dirtyFirst > i) m_dirtyFirst = i;
+        m_dirtyLast = i;
+      }
+    }
+  }
+  m_cachedInstances = m_instances;
 }
 
 void VulkanRenderer::render() {
@@ -1296,14 +1316,21 @@ bool VulkanRenderer::growInstanceBuffer(size_t needed) {
 
 void VulkanRenderer::updateInstanceBuffer() {
   if (m_instanceBuffer == VK_NULL_HANDLE || m_instances.isEmpty()) return;
+  if (m_dirtyLast < m_dirtyFirst) return;  // nothing changed this frame
 
   const size_t needed = static_cast<size_t>(m_instances.size());
-  if (needed > m_instanceCapacity && !growInstanceBuffer(needed)) return;
+  const bool grew = (needed > m_instanceCapacity);
+  if (grew && !growInstanceBuffer(needed)) return;
+
+  // After a buffer reallocation every instance must be re-uploaded.
+  const int uploadFirst = grew ? 0 : m_dirtyFirst;
+  const int uploadLast  = grew ? (int)m_instances.size() - 1 : m_dirtyLast;
 
   void *data = nullptr;
-  const size_t size = m_instances.size() * sizeof(TerminalQuadInstance);
-  vkMapMemory(m_device, m_instanceMemory, 0, size, 0, &data);
-  memcpy(data, m_instances.data(), size);
+  const size_t offsetBytes = static_cast<size_t>(uploadFirst) * sizeof(TerminalQuadInstance);
+  const size_t uploadSize  = static_cast<size_t>(uploadLast - uploadFirst + 1) * sizeof(TerminalQuadInstance);
+  vkMapMemory(m_device, m_instanceMemory, offsetBytes, uploadSize, 0, &data);
+  memcpy(data, &m_instances[uploadFirst], uploadSize);
   vkUnmapMemory(m_device, m_instanceMemory);
 }
 
