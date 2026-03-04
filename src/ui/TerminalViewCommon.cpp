@@ -18,7 +18,13 @@ void TerminalViewCommon::pasteClipboard() {
     return;
   }
   QByteArray text = QApplication::clipboard()->text().toLocal8Bit();
-  m_session->sendInput(text);
+  if (m_session->buffer() && m_session->buffer()->bracketedPasteMode()) {
+    m_session->sendInput(QByteArrayLiteral("\033[200~"));
+    m_session->sendInput(text);
+    m_session->sendInput(QByteArrayLiteral("\033[201~"));
+  } else {
+    m_session->sendInput(text);
+  }
 }
 
 bool TerminalViewCommon::hasSelection() const {

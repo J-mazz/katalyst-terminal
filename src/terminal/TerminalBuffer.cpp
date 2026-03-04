@@ -65,6 +65,109 @@ void TerminalBuffer::clearToEnd() {
   }
 }
 
+void TerminalBuffer::clearFromTop() {
+  for (int row = 0; row < m_cursorRow; ++row) {
+    screenRow(row) = blankRow(m_currentFg, m_currentBg);
+  }
+  if (m_cursorRow >= 0 && m_cursorRow < m_rows) {
+    auto &line = screenRow(m_cursorRow);
+    for (int col = 0; col <= qMin(m_cursorColumn, line.size() - 1); ++col) {
+      line[col] = Cell{QLatin1Char(' '), m_currentFg, m_currentBg};
+    }
+  }
+}
+
+void TerminalBuffer::insertChars(int n) {
+  if (m_cursorRow < 0 || m_cursorRow >= m_rows) return;
+  auto &line = screenRow(m_cursorRow);
+  n = qMin(n, m_columns - m_cursorColumn);
+  for (int i = 0; i < n; ++i) {
+    line.insert(m_cursorColumn, Cell{QLatin1Char(' '), m_currentFg, m_currentBg});
+  }
+  line.resize(m_columns);
+}
+
+void TerminalBuffer::deleteChars(int n) {
+  if (m_cursorRow < 0 || m_cursorRow >= m_rows) return;
+  auto &line = screenRow(m_cursorRow);
+  n = qMin(n, m_columns - m_cursorColumn);
+  line.remove(m_cursorColumn, n);
+  while (line.size() < m_columns) {
+    line.push_back(Cell{QLatin1Char(' '), m_currentFg, m_currentBg});
+  }
+}
+
+void TerminalBuffer::eraseChars(int n) {
+  if (m_cursorRow < 0 || m_cursorRow >= m_rows) return;
+  auto &line = screenRow(m_cursorRow);
+  const int end = qMin(m_cursorColumn + n, m_columns);
+  for (int col = m_cursorColumn; col < end; ++col) {
+    line[col] = Cell{QLatin1Char(' '), m_currentFg, m_currentBg};
+  }
+}
+
+void TerminalBuffer::insertLines(int n) {
+  if (m_cursorRow < m_scrollTop || m_cursorRow > m_scrollBottom) return;
+  n = qMin(n, m_scrollBottom - m_cursorRow + 1);
+  for (int i = 0; i < n; ++i) {
+    scrollRegionDown(m_cursorRow, m_scrollBottom);
+  }
+  m_cursorColumn = 0;
+  m_pendingWrap = false;
+}
+
+void TerminalBuffer::deleteLines(int n) {
+  if (m_cursorRow < m_scrollTop || m_cursorRow > m_scrollBottom) return;
+  n = qMin(n, m_scrollBottom - m_cursorRow + 1);
+  for (int i = 0; i < n; ++i) {
+    scrollRegionUp(m_cursorRow, m_scrollBottom);
+  }
+  m_cursorColumn = 0;
+  m_pendingWrap = false;
+}
+
+void TerminalBuffer::reverseIndex() {
+  m_pendingWrap = false;
+  if (m_cursorRow == m_scrollTop) {
+    scrollRegionDown(m_scrollTop, m_scrollBottom);
+  } else if (m_cursorRow > 0) {
+    m_cursorRow--;
+  }
+}
+
+void TerminalBuffer::saveCursor() {
+  m_savedCursorRow = m_cursorRow;
+  m_savedCursorColumn = m_cursorColumn;
+  m_savedFg = m_currentFg;
+  m_savedBg = m_currentBg;
+  m_savedBold = m_currentBold;
+  m_savedItalic = m_currentItalic;
+  m_savedUnderline = m_currentUnderline;
+  m_savedStrikethrough = m_currentStrikethrough;
+  m_savedInverse = m_currentInverse;
+}
+
+void TerminalBuffer::restoreCursor() {
+  m_cursorRow = qBound(0, m_savedCursorRow, m_rows - 1);
+  m_cursorColumn = qBound(0, m_savedCursorColumn, m_columns - 1);
+  m_currentFg = m_savedFg;
+  m_currentBg = m_savedBg;
+  m_currentBold = m_savedBold;
+  m_currentItalic = m_savedItalic;
+  m_currentUnderline = m_savedUnderline;
+  m_currentStrikethrough = m_savedStrikethrough;
+  m_currentInverse = m_savedInverse;
+  m_pendingWrap = false;
+}
+
+bool TerminalBuffer::bracketedPasteMode() const {
+  return m_bracketedPaste;
+}
+
+void TerminalBuffer::setBracketedPasteMode(bool enabled) {
+  m_bracketedPaste = enabled;
+}
+
 void TerminalBuffer::setScrollbackLimit(int lines) {
   m_scrollbackLimit = qMax(0, lines);
   while (m_scrollback.size() > m_scrollbackLimit) {
@@ -254,8 +357,7 @@ void TerminalBuffer::enterAlternateScreen() {
   if (m_useAlternateScreen) {
     return;
   }
-  m_savedCursorRow = m_cursorRow;
-  m_savedCursorColumn = m_cursorColumn;
+  saveCursor();
   m_useAlternateScreen = true;
   ensureScreenSize();
   m_alternateScreenStart = 0;
@@ -271,8 +373,7 @@ void TerminalBuffer::exitAlternateScreen() {
   }
   m_useAlternateScreen = false;
   ensureScreenSize();
-  m_cursorRow = qBound(0, m_savedCursorRow, m_rows - 1);
-  m_cursorColumn = qBound(0, m_savedCursorColumn, m_columns - 1);
+  restoreCursor();
   resetScrollRegion();
 }
 

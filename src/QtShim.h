@@ -187,8 +187,20 @@ public:
 	void exitAlternateScreen();
 	void setCursorVisible(bool visible);
 	bool cursorVisible() const;
+	bool bracketedPasteMode() const;
+	void setBracketedPasteMode(bool enabled);
 	int cursorRow() const;
 	int cursorColumn() const;
+
+	void clearFromTop();
+	void insertChars(int n);
+	void deleteChars(int n);
+	void eraseChars(int n);
+	void insertLines(int n);
+	void deleteLines(int n);
+	void reverseIndex();
+	void saveCursor();
+	void restoreCursor();
 
 	int rows() const;
 	int columns() const;
@@ -239,6 +251,15 @@ private:
 	int m_scrollBottom = 23;
 	bool m_useAlternateScreen = false;
 	bool m_cursorVisible = true;
+	bool m_bracketedPaste = false;
+
+	QColor m_savedFg = QColor(220, 220, 220);
+	QColor m_savedBg = QColor(20, 22, 26);
+	bool m_savedBold = false;
+	bool m_savedItalic = false;
+	bool m_savedUnderline = false;
+	bool m_savedStrikethrough = false;
+	bool m_savedInverse = false;
 
 	QColor m_defaultFg = QColor(220, 220, 220);
 	QColor m_defaultBg = QColor(20, 22, 26);

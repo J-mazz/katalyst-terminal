@@ -138,6 +138,7 @@ void handleCsiCommand(VtParserCore *core, TerminalBuffer *buffer, char command) 
     case 'J': {
       const int mode = core->params.isEmpty() ? 0 : core->params.first();
       if      (mode == 0) buffer->clearToEnd();
+      else if (mode == 1) buffer->clearFromTop();
       else if (mode == 2) buffer->clear();
       break;
     }
@@ -167,6 +168,13 @@ void handleCsiCommand(VtParserCore *core, TerminalBuffer *buffer, char command) 
         buffer->scrollDown();
       break;
     }
+    case '@': buffer->insertChars(param(0, 1));   break;
+    case 'P': buffer->deleteChars(param(0, 1));   break;
+    case 'X': buffer->eraseChars(param(0, 1));    break;
+    case 'L': buffer->insertLines(param(0, 1));   break;
+    case 'M': buffer->deleteLines(param(0, 1));   break;
+    case 's': buffer->saveCursor();               break;
+    case 'u': buffer->restoreCursor();            break;
     default: break;
   }
   core->params.clear();
@@ -183,6 +191,7 @@ void handlePrivateModeCommand(VtParserCore *core, TerminalBuffer *buffer, char c
       continue;
     }
     switch (mode) {
+      case 47:
       case 1049:
         if (enable) {
           buffer->enterAlternateScreen();
@@ -192,6 +201,9 @@ void handlePrivateModeCommand(VtParserCore *core, TerminalBuffer *buffer, char c
         break;
       case 25:
         buffer->setCursorVisible(enable);
+        break;
+      case 2004:
+        buffer->setBracketedPasteMode(enable);
         break;
       default:
         break;
@@ -257,7 +269,7 @@ bool handleOscByte(VtParserCore *core, unsigned char raw, QString *titleOut) {
   return false;
 }
 
-void handleEscapeByte(VtParserCore *core, char ch) {
+void handleEscapeByte(VtParserCore *core, TerminalBuffer *buffer, char ch) {
   if (ch == '[') {
     core->state = VtParserCore::State::Csi;
     core->params.clear();
@@ -267,6 +279,13 @@ void handleEscapeByte(VtParserCore *core, char ch) {
     core->state = VtParserCore::State::Osc;
     core->oscString.clear();
   } else {
+    if (ch == 'M') {
+      buffer->reverseIndex();
+    } else if (ch == '7') {
+      buffer->saveCursor();
+    } else if (ch == '8') {
+      buffer->restoreCursor();
+    }
     core->state = VtParserCore::State::Normal;
   }
 }
@@ -302,7 +321,7 @@ bool feedVtParserCore(VtParserCore *core, TerminalBuffer *buffer,
     const char ch = static_cast<char>(raw);
     switch (core->state) {
       case VtParserCore::State::Normal:     handleNormalByte(core, buffer, raw);         break;
-      case VtParserCore::State::Escape:     handleEscapeByte(core, ch);                  break;
+      case VtParserCore::State::Escape:     handleEscapeByte(core, buffer, ch);          break;
       case VtParserCore::State::Csi:        handleCsiByte(core, buffer, ch);             break;
       case VtParserCore::State::Osc:        titleChanged |= handleOscByte(core, raw, titleOut);         break;
       case VtParserCore::State::OscEscape:  titleChanged |= handleOscEscapeByte(core, ch, titleOut);    break;
