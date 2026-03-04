@@ -1,8 +1,5 @@
 build/
 *~
-.DS_Store
-compile_commands.json
-/build
 .github/
 std.o
 build_output.txt
@@ -22,5 +19,7 @@ build_output.txt
 *.class
 .cache/
 build*.txt
-gcm.cache/terminal.ansi.color.gcm
-gcm.cache/terminal.sgr.param.gcm
+*.gcov
+gcm.cache/
+coverage/
+.venv/

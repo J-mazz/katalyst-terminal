@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 
+enable_testing()
+
 # --- C++23 std module cache ---------------------------------------------------
 # GCC requires a pre-compiled std.gcm for `import std;`.  Build it once into
 # the source tree's gcm.cache/ so every TU can find it.
@@ -32,21 +34,25 @@ endif()
 # Symlink the gcm.cache into the build directory so GCC can find it.
 add_compile_options(-fmodules)
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  add_compile_options(-fprofile-arcs -ftest-coverage)
+  add_link_options(-fprofile-arcs -ftest-coverage)
+endif()
+
 # Create a symlink from build/gcm.cache → source/gcm.cache
 execute_process(
   COMMAND ${CMAKE_COMMAND} -E create_symlink
           "${GCM_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/gcm.cache"
 )
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Gui DBus)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Gui DBus Test)
 find_package(Vulkan REQUIRED)
 find_package(KF6Config REQUIRED)
 
-add_executable(katalyst-terminal
+set(SOURCES
   src/QtShim.h
   src/modules/AnsiColorCore.cpp
   src/modules/SgrParamCore.cpp
-  src/main.cpp
   src/MainWindow.cpp
   src/dbus/TerminalDBus.cpp
   src/terminal/PtyProcess.cpp
@@ -56,14 +62,25 @@ add_executable(katalyst-terminal
   src/terminal/VtParserCore.cpp
   src/terminal/VtParser.cpp
   src/ui/TerminalView.cpp
+  src/ui/TerminalViewCommon.cpp
   src/ui/TerminalTab.cpp
   src/ui/VulkanTerminalView.cpp
   src/vulkan/VulkanRenderer.cpp
   src/vulkan/VulkanTerminalWindow.cpp
 )
 
+add_library(katalyst_lib STATIC ${SOURCES})
+
+target_include_directories(katalyst_lib PUBLIC src)
+
+target_link_libraries(katalyst_lib Qt6::Widgets Qt6::Gui Qt6::DBus Vulkan::Vulkan KF6::ConfigCore)
+
+add_executable(katalyst-terminal src/main.cpp)
+
+target_link_libraries(katalyst-terminal katalyst_lib)
+
 set_source_files_properties(src/terminal/VtParserCore.cpp PROPERTIES
-  OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/katalyst-terminal.dir/src/modules/AnsiColorCore.cpp.o;${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/katalyst-terminal.dir/src/modules/SgrParamCore.cpp.o"
+  OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/katalyst_lib.dir/src/modules/AnsiColorCore.cpp.o;${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/katalyst_lib.dir/src/modules/SgrParamCore.cpp.o"
 )
 
 set(SHADER_SOURCES
@@ -94,12 +111,28 @@ else()
   message(WARNING "glslangValidator not found; Vulkan shaders will not be built.")
 endif()
 
+add_executable(test_terminal tests/test_terminal.cpp)
+target_link_libraries(test_terminal katalyst_lib Qt6::Test)
+add_test(NAME test_terminal COMMAND test_terminal)
+
+find_program(GCOVR gcovr)
+
+if(GCOVR)
+
+  add_custom_target(coverage
+
+    COMMAND ${GCOVR} -r ${CMAKE_CURRENT_SOURCE_DIR} --html --html-details -o ${CMAKE_CURRENT_SOURCE_DIR}/coverage/coverage.html ${CMAKE_CURRENT_BINARY_DIR}
+
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+
+    DEPENDS test_terminal
+
+  )
+
+endif()
+
 target_link_libraries(katalyst-terminal
-  Qt6::Widgets
-  Qt6::Gui
-  Qt6::DBus
-  Vulkan::Vulkan
-  KF6::ConfigCore
+  katalyst_lib
 )
 
 target_precompile_headers(katalyst-terminal PRIVATE src/QtShim.h)

@@ -664,26 +664,28 @@ public:
 
 	void setSearchTerm(const QString &term) override;
 	bool findNext(bool forward) override;
+	void keyPressEvent(QKeyEvent *event) override;
+	void inputMethodEvent(QInputMethodEvent *event) override;
+	void wheelEvent(QWheelEvent *event) override;
+	void focusInEvent(QFocusEvent *event) override;
+	void mousePressEvent(QMouseEvent *event) override;
+	void mouseMoveEvent(QMouseEvent *event) override;
+	void mouseReleaseEvent(QMouseEvent *event) override;
 
 private:
 	void updateFrame();
 	void connectVulkanSignals();
+	CellPos cellFromPoint(const QPoint &pos) const;
+	void updateSelection(const QPoint &pos);
+	QString selectedRow(const QStringList &lines, int row,
+							 const CellPos &start, const CellPos &end) const;
+	QString selectedText() const;
 
 
 	QVulkanInstance m_instance;
 	VulkanTerminalWindow *m_window = nullptr;
 	VulkanRenderer *m_renderer = nullptr;
 	QWidget *m_container = nullptr;
-
-	int m_cellWidth = 8;
-	int m_cellHeight = 16;
-
-	int m_scrollOffset = 0;
-	bool m_userScroll = false;
-
-	bool m_selecting = false;
-	CellPos m_selectStart;
-	CellPos m_selectEnd;
 };
 
 class TerminalTab : public QWidget {

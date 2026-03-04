@@ -3,7 +3,7 @@ Version:        0.1.0
 Release:        1%{?dist}
 Summary:        Vulkan-accelerated C++23 terminal emulator for Katalyst
 
-License:        GPL-3.0-or-later
+License:        Apache-2.0
 URL:            https://github.com/katalyst/katalyst-terminal
 Source0:        %{name}-%{version}.tar.gz
 

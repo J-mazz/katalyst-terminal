@@ -3,9 +3,7 @@ import std;
 
 VulkanTerminalView::VulkanTerminalView(TerminalSession *session,
                                        TerminalConfig *config, QWidget *parent)
-    : TerminalViewBase(parent), m_session(session), m_config(config) {
-  setFocusPolicy(Qt::StrongFocus);
-  setAttribute(Qt::WA_InputMethodEnabled, true);
+    : TerminalViewCommon(session, config, parent) {
 
   const auto profile = m_config->defaultProfile();
 
@@ -57,25 +55,6 @@ void VulkanTerminalView::setSearchTerm(const QString &) {}
 
 bool VulkanTerminalView::findNext(bool) {
   return false;
-}
-
-void VulkanTerminalView::copySelection() {
-  if (!hasSelection()) {
-    return;
-  }
-  QApplication::clipboard()->setText(selectedText());
-}
-
-void VulkanTerminalView::pasteClipboard() {
-  if (!m_session) {
-    return;
-  }
-  QByteArray text = QApplication::clipboard()->text().toLocal8Bit();
-  m_session->sendInput(text);
-}
-
-TerminalSession *VulkanTerminalView::session() const {
-  return m_session;
 }
 
 void VulkanTerminalView::keyPressEvent(QKeyEvent *event) {
@@ -192,15 +171,6 @@ VulkanTerminalView::CellPos VulkanTerminalView::cellFromPoint(
 void VulkanTerminalView::updateSelection(const QPoint &pos) {
   m_selectEnd = cellFromPoint(pos);
   updateFrame();
-}
-
-bool VulkanTerminalView::hasSelection() const {
-  return m_selectStart.row != m_selectEnd.row ||
-         m_selectStart.column != m_selectEnd.column;
-}
-
-bool VulkanTerminalView::isSelectionReversed(const CellPos &start, const CellPos &end) const {
-  return start.row > end.row || (start.row == end.row && start.column > end.column);
 }
 
 QString VulkanTerminalView::selectedRow(const QStringList &lines, int row,

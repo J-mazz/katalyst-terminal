@@ -1,8 +1,4 @@
 #include "QtShim.h"
-#include "TerminalViewCommon.h"
-#include "terminal/TerminalSession.h"
-#include "terminal/TerminalConfig.h"
-#include "terminal/TerminalBuffer.h"
 import std;
 
 TerminalViewCommon::TerminalViewCommon(TerminalSession *session, TerminalConfig *config, QWidget *parent)

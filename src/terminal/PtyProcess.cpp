@@ -90,7 +90,7 @@ void PtyProcess::handleReadyRead() {
   ssize_t bytes = ::read(m_masterFd, buffer, sizeof(buffer));
   if (bytes > 0) {
     emit dataReady(QByteArray(buffer, static_cast<int>(bytes)));
-  } else if (bytes == 0) {
+  } else if (bytes == 0 || (bytes < 0 && errno == EIO)) {
     emit exited();
     stop();
   }
