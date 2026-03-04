@@ -270,11 +270,15 @@ void TerminalBuffer::newline() {
     }
   } else {
     if (m_cursorRow == m_rows - 1) {
-      if (!m_useAlternateScreen) {
-        pushScrollback(screenRow(0));
+      // Only scroll the whole screen when there is no restricted scroll region.
+      // If a scroll region is active, the cursor is outside it — just stay put.
+      if (m_scrollTop == 0 && m_scrollBottom == m_rows - 1) {
+        if (!m_useAlternateScreen) {
+          pushScrollback(screenRow(0));
+        }
+        screenRow(0) = blankRow(m_currentFg, m_currentBg);
+        activeScreenStart() = (activeScreenStart() + 1) % m_rows;
       }
-      screenRow(0) = blankRow(m_currentFg, m_currentBg);
-      activeScreenStart() = (activeScreenStart() + 1) % m_rows;
     } else {
       m_cursorRow++;
     }

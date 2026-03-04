@@ -856,6 +856,8 @@ bool VulkanRenderer::createVertexBuffer() {
   allocInfo.allocationSize = requirements.size;
   allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  if (allocInfo.memoryTypeIndex == UINT32_MAX)
+    return false;
 
   if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_vertexMemory) != VK_SUCCESS)
     return false;
@@ -871,7 +873,7 @@ bool VulkanRenderer::createVertexBuffer() {
 bool VulkanRenderer::createInstanceBuffer() {
   VkBufferCreateInfo instanceInfo{};
   instanceInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  instanceInfo.size = sizeof(TerminalQuadInstance) * 4;
+  instanceInfo.size = sizeof(TerminalQuadInstance) * 256;
   instanceInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
   instanceInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -885,6 +887,8 @@ bool VulkanRenderer::createInstanceBuffer() {
   allocInfo.allocationSize = requirements.size;
   allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  if (allocInfo.memoryTypeIndex == UINT32_MAX)
+    return false;
 
   if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_instanceMemory) != VK_SUCCESS)
     return false;
@@ -922,6 +926,8 @@ bool VulkanRenderer::createAtlasImage(uint32_t width, uint32_t height) {
   allocInfo.allocationSize = requirements.size;
   allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
                                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (allocInfo.memoryTypeIndex == UINT32_MAX)
+    return false;
 
   if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_atlasMemory) != VK_SUCCESS)
     return false;
@@ -1264,6 +1270,10 @@ bool VulkanRenderer::allocateStagingBuffer(VkDeviceSize imageSize,
   stagingAlloc.allocationSize = stagingReqs.size;
   stagingAlloc.memoryTypeIndex = findMemoryType(stagingReqs.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  if (stagingAlloc.memoryTypeIndex == UINT32_MAX) {
+    vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+    return false;
+  }
 
   if (vkAllocateMemory(m_device, &stagingAlloc, nullptr, &stagingMemory) != VK_SUCCESS) {
     vkDestroyBuffer(m_device, stagingBuffer, nullptr);
@@ -1331,6 +1341,11 @@ bool VulkanRenderer::growInstanceBuffer(size_t needed) {
   allocInfo.allocationSize = requirements.size;
   allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  if (allocInfo.memoryTypeIndex == UINT32_MAX) {
+    vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
+    m_instanceBuffer = VK_NULL_HANDLE;
+    return false;
+  }
 
   if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_instanceMemory) != VK_SUCCESS) {
     vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
@@ -1464,9 +1479,9 @@ uint32_t VulkanRenderer::findMemoryType(uint32_t typeFilter,
     }
   }
 
-  qFatal("VulkanRenderer: no suitable memory type found (filter=0x%x, props=0x%x)",
-         typeFilter, static_cast<unsigned>(properties));
-  return 0;
+  qWarning("VulkanRenderer: no suitable memory type found (filter=0x%x, props=0x%x)",
+           typeFilter, static_cast<unsigned>(properties));
+  return UINT32_MAX;
 }
 
 VkShaderModule VulkanRenderer::createShaderModule(const QByteArray &code) {

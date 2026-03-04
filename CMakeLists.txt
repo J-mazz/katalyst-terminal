@@ -12,7 +12,18 @@ enable_testing()
 # --- C++23 std module cache ---------------------------------------------------
 # GCC requires a pre-compiled std.gcm for `import std;`.  Build it once into
 # the source tree's gcm.cache/ so every TU can find it.
-set(STD_MODULE_SRC "/usr/include/c++/15/bits/std.cc")
+# Detect the GCC major version so we don't hardcode the include path.
+execute_process(
+  COMMAND ${CMAKE_CXX_COMPILER} -dumpversion
+  OUTPUT_VARIABLE _gcc_full_version
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+string(REGEX REPLACE "([0-9]+).*" "\\1" _gcc_major "${_gcc_full_version}")
+find_file(STD_MODULE_SRC "bits/std.cc"
+  PATHS "/usr/include/c++/${_gcc_major}"
+  NO_DEFAULT_PATH
+  REQUIRED
+)
 set(GCM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gcm.cache")
 set(STD_GCM "${GCM_DIR}/std.gcm")
 
@@ -40,19 +51,23 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 # Create a symlink from build/gcm.cache → source/gcm.cache
-execute_process(
-  COMMAND ${CMAKE_COMMAND} -E create_symlink
-          "${GCM_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/gcm.cache"
-)
+file(CREATE_LINK "${GCM_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/gcm.cache" SYMBOLIC)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Gui DBus Test)
 find_package(Vulkan REQUIRED)
 find_package(KF6Config REQUIRED)
 
-set(SOURCES
-  src/QtShim.h
+# C++23 module interface files must be compiled before any TU that imports them.
+# Build them as a separate OBJECT library so we can enforce ordering portably.
+add_library(katalyst_modules OBJECT
   src/modules/AnsiColorCore.cpp
   src/modules/SgrParamCore.cpp
+)
+target_include_directories(katalyst_modules PUBLIC src)
+target_link_libraries(katalyst_modules Qt6::Widgets Qt6::Gui Vulkan::Vulkan)
+
+set(SOURCES
+  src/QtShim.h
   src/MainWindow.cpp
   src/dbus/TerminalDBus.cpp
   src/terminal/PtyProcess.cpp
@@ -69,7 +84,8 @@ set(SOURCES
   src/vulkan/VulkanTerminalWindow.cpp
 )
 
-add_library(katalyst_lib STATIC ${SOURCES})
+add_library(katalyst_lib STATIC ${SOURCES} $<TARGET_OBJECTS:katalyst_modules>)
+add_dependencies(katalyst_lib katalyst_modules)
 
 target_include_directories(katalyst_lib PUBLIC src)
 
@@ -78,10 +94,6 @@ target_link_libraries(katalyst_lib Qt6::Widgets Qt6::Gui Qt6::DBus Vulkan::Vulka
 add_executable(katalyst-terminal src/main.cpp)
 
 target_link_libraries(katalyst-terminal katalyst_lib)
-
-set_source_files_properties(src/terminal/VtParserCore.cpp PROPERTIES
-  OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/katalyst_lib.dir/src/modules/AnsiColorCore.cpp.o;${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/katalyst_lib.dir/src/modules/SgrParamCore.cpp.o"
-)
 
 set(SHADER_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/shaders/terminal_quad.vert
@@ -131,20 +143,7 @@ if(GCOVR)
 
 endif()
 
-target_link_libraries(katalyst-terminal
-  katalyst_lib
-)
-
 target_precompile_headers(katalyst_lib PUBLIC src/QtShim.h)
-
-# C++23 modules must have "export module ..." as their absolute first declaration.
-# The precompiled header injected by CMake via "-include cmake_pch.hxx" breaks this rule.
-# Disable PCH for our raw module interface files.
-set_source_files_properties(
-  src/modules/AnsiColorCore.cpp
-  src/modules/SgrParamCore.cpp
-  PROPERTIES SKIP_PRECOMPILE_HEADERS ON
-)
 
 target_include_directories(katalyst-terminal PRIVATE src)
 
