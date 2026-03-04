@@ -18,7 +18,9 @@
 #include <QCoreApplication>
 #include <QDBusConnection>
 #include <QDBusMessage>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
 #include <QHash>
@@ -32,6 +34,7 @@
 #include <QString>
 #include <QStringDecoder>
 #include <QStringList>
+#include <QStandardPaths>
 #include <QVector>
 #include <QVersionNumber>
 #include <QtGlobal>

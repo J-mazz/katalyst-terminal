@@ -135,7 +135,7 @@ target_link_libraries(katalyst-terminal
   katalyst_lib
 )
 
-target_precompile_headers(katalyst-terminal PRIVATE src/QtShim.h)
+target_precompile_headers(katalyst_lib PUBLIC src/QtShim.h)
 
 # C++23 modules must have "export module ..." as their absolute first declaration.
 # The precompiled header injected by CMake via "-include cmake_pch.hxx" breaks this rule.

@@ -75,12 +75,36 @@ QByteArray loadShaderBytes(const QString &path) {
   return file.readAll();
 }
 
+QString resolveShaderPath(const QString &fileName) {
+  const QString rel = QStringLiteral("katalyst-terminal/shaders/") + fileName;
+  const QString located = QStandardPaths::locate(
+      QStandardPaths::GenericDataLocation, rel, QStandardPaths::LocateFile);
+  if (!located.isEmpty()) {
+    return located;
+  }
+
+  const QString appDir = QCoreApplication::applicationDirPath();
+  const QStringList candidates = {
+      QDir(appDir).filePath(QStringLiteral("shaders/") + fileName),
+      QDir(appDir).filePath(QStringLiteral("../share/katalyst-terminal/shaders/") + fileName),
+      QStringLiteral("shaders/") + fileName,
+  };
+
+  for (const QString &candidate : candidates) {
+    if (QFile::exists(candidate)) {
+      return candidate;
+    }
+  }
+
+  return QDir(appDir).filePath(QStringLiteral("../share/katalyst-terminal/shaders/") + fileName);
+}
+
 QString terminalVertexShaderPath() {
-  return QStringLiteral("shaders/terminal_quad.vert.spv");
+  return resolveShaderPath(QStringLiteral("terminal_quad.vert.spv"));
 }
 
 QString terminalFragmentShaderPath() {
-  return QStringLiteral("shaders/terminal_quad.frag.spv");
+  return resolveShaderPath(QStringLiteral("terminal_quad.frag.spv"));
 }
 }
 
