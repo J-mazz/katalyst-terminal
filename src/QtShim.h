@@ -181,6 +181,8 @@ public:
 	void cursorToColumn(int col);
 	void setScrollRegion(int top, int bottom);
 	void resetScrollRegion();
+	void scrollUp();
+	void scrollDown();
 	void enterAlternateScreen();
 	void exitAlternateScreen();
 	void setCursorVisible(bool visible);
@@ -209,6 +211,7 @@ private:
 	void pushScrollback(const QVector<Cell> &line);
 	QString lineToString(const QVector<Cell> &line) const;
 	void scrollRegionUp(int top, int bottom);
+	void scrollRegionDown(int top, int bottom);
 	QVector<QVector<Cell>> &activeScreen();
 	const QVector<QVector<Cell>> &activeScreen() const;
 	int &activeScreenStart();
@@ -771,7 +774,7 @@ private slots:
 	void updateTabTitle(int index);
 
 private:
-	TerminalConfig *m_config = nullptr;
+	std::unique_ptr<TerminalConfig> m_config;
 	QTabWidget *m_tabs = nullptr;
 	QPushButton *m_newTabButton = nullptr;
 	QAction *m_newTabAction = nullptr;

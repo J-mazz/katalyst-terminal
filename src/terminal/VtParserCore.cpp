@@ -155,6 +155,18 @@ void handleCsiCommand(VtParserCore *core, TerminalBuffer *buffer, char command) 
       buffer->setScrollRegion(top - 1, bottom - 1);
       break;
     }
+    case 'S': {
+      const int n = param(0, 1);
+      for (int i = 0; i < n; ++i)
+        buffer->scrollUp();
+      break;
+    }
+    case 'T': {
+      const int n = param(0, 1);
+      for (int i = 0; i < n; ++i)
+        buffer->scrollDown();
+      break;
+    }
     default: break;
   }
   core->params.clear();

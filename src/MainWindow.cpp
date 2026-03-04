@@ -7,16 +7,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   setupUi();
 }
 
-MainWindow::~MainWindow() {
-  delete m_config;
-}
+MainWindow::~MainWindow() = default;
 
 void MainWindow::openTab() {
   newTab();
 }
 
 void MainWindow::setupUi() {
-  m_config = new TerminalConfig();
+  m_config = std::make_unique<TerminalConfig>();
 
   auto *central = new QWidget(this);
   auto *layout = new QVBoxLayout(central);
@@ -159,7 +157,7 @@ void MainWindow::connectTabSignals(TerminalTab *tab) {
 }
 
 void MainWindow::newTab() {
-  auto *tab = new TerminalTab(m_config, this);
+  auto *tab = new TerminalTab(m_config.get(), this);
   int index = m_tabs->addTab(tab, tab->tabTitle());
   m_tabs->setCurrentIndex(index);
   connectTabSignals(tab);

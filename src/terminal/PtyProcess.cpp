@@ -5,8 +5,12 @@ namespace {
 [[noreturn]] void execChild(const QString &program, const QStringList &args,
                             const QStringList &env) {
   for (const QString &entry : env) {
-    QByteArray bytes = entry.toLocal8Bit();
-    putenv(strdup(bytes.constData()));
+    const int eq = entry.indexOf(QLatin1Char('='));
+    if (eq > 0) {
+      const QByteArray key = entry.left(eq).toLocal8Bit();
+      const QByteArray val = entry.mid(eq + 1).toLocal8Bit();
+      setenv(key.constData(), val.constData(), 1);
+    }
   }
   QByteArray programBytes = program.toLocal8Bit();
   QVector<QByteArray> argBytes;

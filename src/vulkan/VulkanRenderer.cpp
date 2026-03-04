@@ -409,7 +409,8 @@ void VulkanRenderer::render() {
   VkResult acquireResult =
       vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX,
                             m_imageAvailable, VK_NULL_HANDLE, &imageIndex);
-  if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+  if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR ||
+      acquireResult == VK_SUBOPTIMAL_KHR) {
     resize(m_window->width(), m_window->height());
     return;
   }
@@ -430,7 +431,11 @@ void VulkanRenderer::render() {
   submitInfo.signalSemaphoreCount = 1;
   submitInfo.pSignalSemaphores = &m_renderFinished;
 
-  vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlight);
+  VkResult submitResult = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlight);
+  if (submitResult != VK_SUCCESS) {
+    qWarning("VulkanRenderer: vkQueueSubmit failed (%d)", submitResult);
+    return;
+  }
 
   VkPresentInfoKHR presentInfo{};
   presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -1459,6 +1464,8 @@ uint32_t VulkanRenderer::findMemoryType(uint32_t typeFilter,
     }
   }
 
+  qFatal("VulkanRenderer: no suitable memory type found (filter=0x%x, props=0x%x)",
+         typeFilter, static_cast<unsigned>(properties));
   return 0;
 }
 

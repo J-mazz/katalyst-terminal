@@ -304,17 +304,18 @@ int TerminalBuffer::totalLines() const {
   if (m_useAlternateScreen) {
     return m_rows;
   }
-  return m_scrollback.size() + m_normalScreen.size();
+  return static_cast<int>(m_scrollback.size()) + m_normalScreen.size();
 }
 
 QString TerminalBuffer::lineAt(int index) const {
   if (index < 0 || index >= totalLines()) {
     return QString();
   }
-  if (index < m_scrollback.size()) {
+  const auto sbSize = static_cast<int>(m_scrollback.size());
+  if (index < sbSize) {
     return lineToString(m_scrollback[index]);
   }
-  const int base = m_useAlternateScreen ? 0 : (int)m_scrollback.size();
+  const int base = m_useAlternateScreen ? 0 : sbSize;
   return lineToString(screenRow(index - base));
 }
 
@@ -322,10 +323,11 @@ TerminalBuffer::Cell TerminalBuffer::cellAt(int index, int column) const {
   if (index < 0 || index >= totalLines()) {
     return Cell{};
   }
+  const auto sbSize = static_cast<int>(m_scrollback.size());
   const QVector<Cell> &line =
-      (!m_useAlternateScreen && index < (int)m_scrollback.size())
+      (!m_useAlternateScreen && index < sbSize)
           ? m_scrollback[index]
-        : screenRow(index - (m_useAlternateScreen ? 0 : (int)m_scrollback.size()));
+        : screenRow(index - (m_useAlternateScreen ? 0 : sbSize));
   if (column < 0 || column >= line.size()) {
     return Cell{};
   }
@@ -479,6 +481,24 @@ void TerminalBuffer::scrollRegionUp(int top, int bottom) {
     screenRow(row) = screenRow(row + 1);
   }
   screenRow(bottom) = blankRow(m_currentFg, m_currentBg);
+}
+
+void TerminalBuffer::scrollRegionDown(int top, int bottom) {
+  if (top < 0 || bottom >= m_rows || top >= bottom) {
+    return;
+  }
+  for (int row = bottom; row > top; --row) {
+    screenRow(row) = screenRow(row - 1);
+  }
+  screenRow(top) = blankRow(m_currentFg, m_currentBg);
+}
+
+void TerminalBuffer::scrollUp() {
+  scrollRegionUp(m_scrollTop, m_scrollBottom);
+}
+
+void TerminalBuffer::scrollDown() {
+  scrollRegionDown(m_scrollTop, m_scrollBottom);
 }
 
 QVector<QVector<TerminalBuffer::Cell>> &TerminalBuffer::activeScreen() {

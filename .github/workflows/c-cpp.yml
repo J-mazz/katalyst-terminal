@@ -1,4 +1,4 @@
-name: Analysis (C/C++)
+name: CI (C/C++ — Fedora/GCC)
 
 on:
   push:
@@ -8,162 +8,119 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: analysis-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 env:
-  # Keep builds reproducible & logs readable
-  MAKEFLAGS: -j2
-  # Set to 1 if you want to hard-fail on compiler warnings.
+  # Parallelism for cmake --build
+  CMAKE_BUILD_PARALLEL_LEVEL: "2"
+  # Set to 1 to hard-fail on compiler warnings.
   WERROR: "0"
 
 jobs:
-  analyze:
+  build:
     name: ${{ matrix.name }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-latest          # host runner — the real OS is the container below
+    container:
+      image: fedora:latest
+      options: --privileged         # needed for forkpty() in PTY tests
+
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
+
           - name: gcc-debug + tests
-            cc: gcc
-            cxx: g++
-            configure_flags: ""
-            extra_cflags: "-O0 -g3 -fno-omit-frame-pointer"
+            build_type: Debug
             extra_cxxflags: "-O0 -g3 -fno-omit-frame-pointer"
-            run_distcheck: false
-            run_sanitizers: false
-            run_clang_tidy: false
             run_cppcheck: false
+            run_gcc_analyzer: false
 
-          - name: clang-sanitize (ASan/UBSan)
-            cc: clang
-            cxx: clang++
-            configure_flags: ""
-            extra_cflags: "-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined"
-            extra_cxxflags: "-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined"
-            run_distcheck: false
-            run_sanitizers: true
-            run_clang_tidy: false
-            run_cppcheck: false
-
-          - name: static analysis (clang-tidy + cppcheck)
-            cc: clang
-            cxx: clang++
-            # Many autotools projects support out-of-tree builds; we do that here.
-            configure_flags: ""
-            extra_cflags: "-O0 -g"
-            extra_cxxflags: "-O0 -g"
-            run_distcheck: false
-            run_sanitizers: false
-            run_clang_tidy: true
-            run_cppcheck: true
-
-          - name: distcheck (release-ish)
-            cc: gcc
-            cxx: g++
-            configure_flags: ""
-            extra_cflags: "-O2 -g"
+          - name: gcc-release
+            build_type: Release
             extra_cxxflags: "-O2 -g"
-            run_distcheck: true
-            run_sanitizers: false
-            run_clang_tidy: false
             run_cppcheck: false
+            run_gcc_analyzer: false
+
+          - name: gcc-asan-ubsan
+            build_type: RelWithDebInfo
+            extra_cxxflags: "-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all"
+            run_cppcheck: false
+            run_gcc_analyzer: false
+
+          - name: gcc-analyzer + cppcheck
+            build_type: Debug
+            extra_cxxflags: "-O0 -g -fanalyzer"
+            run_cppcheck: true
+            run_gcc_analyzer: true
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build + analysis dependencies
+      # -----------------------------------------------------------------------
+      # 1. Dependencies
+      # -----------------------------------------------------------------------
+      - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            autoconf automake libtool pkg-config \
-            make gcc g++ clang \
-            clang-tidy cppcheck \
-            valgrind \
-            git ca-certificates \
+          dnf install -y \
+            cmake \
+            gcc-c++ \
+            make \
+            ninja-build \
+            pkg-config \
+            qt6-qtbase-devel \
+            qt6-qtbase-private-devel \
+            vulkan-headers \
+            vulkan-loader-devel \
+            kf6-kconfig-devel \
+            glslang \
+            cppcheck \
+            git \
+            ca-certificates \
             python3
-          # Optional: if your project uses gettext, bison, flex, etc.,
-          # add them here.
 
-      - name: Configure environment
-        shell: bash
+      # -----------------------------------------------------------------------
+      # 2. Configure
+      # -----------------------------------------------------------------------
+      - name: Configure (CMake)
         run: |
-          echo "CC=${{ matrix.cc }}" >> "$GITHUB_ENV"
-          echo "CXX=${{ matrix.cxx }}" >> "$GITHUB_ENV"
-
+          WERROR_FLAG=""
           if [[ "${WERROR}" == "1" ]]; then
-            echo "WERROR_FLAGS=-Werror" >> "$GITHUB_ENV"
-          else
-            echo "WERROR_FLAGS=" >> "$GITHUB_ENV"
+            WERROR_FLAG="-Werror"
           fi
 
-      - name: Autoreconf (if needed)
-        shell: bash
-        run: |
-          # If configure is checked in, this is cheap; if not, it generates it.
-          autoreconf -fi
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DCMAKE_C_COMPILER=gcc \
+            -DCMAKE_CXX_FLAGS="${{ matrix.extra_cxxflags }} -Wall -Wextra ${WERROR_FLAG}" \
+            -DCMAKE_C_FLAGS="-Wall -Wextra ${WERROR_FLAG}"
 
-      - name: Configure (out-of-tree)
-        shell: bash
-        run: |
-          mkdir -p build
-          cd build
-          ../configure ${{ matrix.configure_flags }} \
-            CC="${CC}" CXX="${CXX}" \
-            CFLAGS="${{ matrix.extra_cflags }} -Wall -Wextra ${WERROR_FLAGS}" \
-            CXXFLAGS="${{ matrix.extra_cxxflags }} -Wall -Wextra ${WERROR_FLAGS}" \
-            || { echo "Configure failed"; exit 1; }
-
+      # -----------------------------------------------------------------------
+      # 3. Build
+      # -----------------------------------------------------------------------
       - name: Build
-        shell: bash
+        run: cmake --build build --verbose
+
+      # -----------------------------------------------------------------------
+      # 4. Test
+      # -----------------------------------------------------------------------
+      - name: Test (ctest)
         run: |
           cd build
-          make V=1
+          ctest --output-on-failure --timeout 60
 
-      - name: Test (make check)
-        shell: bash
-        run: |
-          cd build
-          # Capture logs, but keep stdout readable
-          make check V=1 || (echo "make check failed"; exit 1)
-
-      - name: Distcheck
-        if: ${{ matrix.run_distcheck }}
-        shell: bash
-        run: |
-          cd build
-          make distcheck V=1
-
-      - name: Run clang-tidy (best-effort)
-        if: ${{ matrix.run_clang_tidy }}
-        shell: bash
-        run: |
-          # clang-tidy needs a compile database; if your build can emit one,
-          # this is ideal. If not, we still try a conservative run.
-          #
-          # If you can, consider adding Bear (apt: bear) and run:
-          #   bear -- make
-          #
-          # For now: try to find obvious .c/.cc/.cpp files and run tidy.
-          set -o pipefail
-          files=$(git ls-files '*.c' '*.cc' '*.cpp' '*.cxx' | tr '\n' ' ')
-          if [[ -z "$files" ]]; then
-            echo "No C/C++ source files found for clang-tidy."
-            exit 0
-          fi
-          clang-tidy $files -- \
-            -I. || true
-
+      # -----------------------------------------------------------------------
+      # 5. Static analysis — cppcheck (optional per matrix row)
+      # -----------------------------------------------------------------------
       - name: Run cppcheck
         if: ${{ matrix.run_cppcheck }}
-        shell: bash
         run: |
-          # --error-exitcode makes warnings fail the job; adjust as desired.
           cppcheck \
             --enable=all \
             --inconclusive \
@@ -171,15 +128,20 @@ jobs:
             --inline-suppr \
             --error-exitcode=1 \
             --suppress=missingIncludeSystem \
-            .
+            --suppress=missingInclude \
+            src/
 
-      - name: Upload logs/artifacts (always)
+      # -----------------------------------------------------------------------
+      # 6. Upload logs
+      # -----------------------------------------------------------------------
+      - name: Upload build logs
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: logs-${{ matrix.name }}
           path: |
-            build/config.log
-            build/test-suite.log
+            build/CMakeFiles/CMakeOutput.log
+            build/CMakeFiles/CMakeError.log
+            build/Testing/Temporary/LastTest.log
             build/**/*.log
           if-no-files-found: ignore
