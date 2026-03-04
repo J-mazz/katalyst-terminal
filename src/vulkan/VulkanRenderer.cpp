@@ -873,7 +873,7 @@ bool VulkanRenderer::createVertexBuffer() {
 bool VulkanRenderer::createInstanceBuffer() {
   VkBufferCreateInfo instanceInfo{};
   instanceInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  instanceInfo.size = sizeof(TerminalQuadInstance) * 256;
+  instanceInfo.size = sizeof(TerminalQuadInstance) * 15000;
   instanceInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
   instanceInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 

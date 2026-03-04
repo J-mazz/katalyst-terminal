@@ -244,6 +244,8 @@ private:
 	int m_cursorColumn = 0;
 	int m_savedCursorRow = 0;
 	int m_savedCursorColumn = 0;
+	int m_altSavedCursorRow = 0;
+	int m_altSavedCursorColumn = 0;
 	int m_scrollbackLimit = 2000;
 	int m_normalScreenStart = 0;
 	int m_alternateScreenStart = 0;

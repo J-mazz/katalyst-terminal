@@ -361,7 +361,8 @@ void TerminalBuffer::enterAlternateScreen() {
   if (m_useAlternateScreen) {
     return;
   }
-  saveCursor();
+  m_altSavedCursorRow = m_cursorRow;
+  m_altSavedCursorColumn = m_cursorColumn;
   m_useAlternateScreen = true;
   ensureScreenSize();
   m_alternateScreenStart = 0;
@@ -377,7 +378,9 @@ void TerminalBuffer::exitAlternateScreen() {
   }
   m_useAlternateScreen = false;
   ensureScreenSize();
-  restoreCursor();
+  m_cursorRow = qBound(0, m_altSavedCursorRow, m_rows - 1);
+  m_cursorColumn = qBound(0, m_altSavedCursorColumn, m_columns - 1);
+  m_pendingWrap = false;
   resetScrollRegion();
 }
 
