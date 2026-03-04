@@ -36,3 +36,5 @@ A fast, Vulkan-accelerated C++23 modular terminal emulator designed for Katalyst
 %{_bindir}/katalyst-terminal
 %{_datadir}/applications/org.katalyst.Terminal.desktop
 %{_datadir}/katalyst-terminal/shaders/*
+
+%license LICENSE
