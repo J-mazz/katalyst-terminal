@@ -100,6 +100,7 @@ class TerminalBuffer;
 class TerminalConfig;
 class TerminalSession;
 class TerminalViewBase;
+class TerminalViewCommon;
 class TerminalView;
 class TerminalTab;
 class VulkanRenderer;
@@ -350,76 +351,89 @@ signals:
 	void focused(TerminalViewBase *view);
 };
 
-class TerminalView : public TerminalViewBase {
+class TerminalViewCommon : public TerminalViewBase {
+    Q_OBJECT
+
+public:
+    TerminalViewCommon(TerminalSession *session, TerminalConfig *config, QWidget *parent = nullptr);
+    virtual ~TerminalViewCommon() = default;
+
+    TerminalSession *session() const { return m_session; }
+
+    void copySelection();
+    void pasteClipboard();
+    bool hasSelection() const;
+    QString selectedText() const;
+    void clearSelection();
+
+    virtual void setSearchTerm(const QString &term) {}
+    virtual bool findNext(bool forward) { return false; }
+
+    struct CellPos {
+        int row = -1;
+        int column = -1;
+    };
+
+protected:
+    void keyPressEvent(QKeyEvent *event) override;
+    void inputMethodEvent(QInputMethodEvent *event) override;
+    void focusInEvent(QFocusEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
+
+    CellPos cellFromPoint(const QPoint &pos) const;
+    void updateSelection(const QPoint &pos);
+    bool isSelectionReversed(const CellPos &start, const CellPos &end) const;
+
+    QByteArray keyToSequence(QKeyEvent *event) const;
+
+    TerminalSession *m_session;
+    TerminalConfig *m_config;
+    CellPos m_selectStart;
+    CellPos m_selectEnd;
+    bool m_selecting = false;
+    int m_scrollOffset = 0;
+    bool m_userScroll = false;
+    int m_cellWidth = 1;
+    int m_cellHeight = 1;
+};
+
+class TerminalView : public TerminalViewCommon {
 	Q_OBJECT
 
 public:
 	explicit TerminalView(TerminalSession *session, TerminalConfig *config,
 												QWidget *parent = nullptr);
-	void setSearchTerm(const QString &term) override;
-	bool findNext(bool forward) override;
-	void copySelection() override;
-	void pasteClipboard() override;
-	TerminalSession *session() const override;
+	void setSearchTerm(const QString &term);
+	bool findNext(bool forward);
 
 protected:
 	void paintEvent(QPaintEvent *event) override;
 	void resizeEvent(QResizeEvent *event) override;
-	void keyPressEvent(QKeyEvent *event) override;
-	void inputMethodEvent(QInputMethodEvent *event) override;
-	void focusInEvent(QFocusEvent *event) override;
-	void mousePressEvent(QMouseEvent *event) override;
-	void mouseMoveEvent(QMouseEvent *event) override;
-	void mouseReleaseEvent(QMouseEvent *event) override;
-	void wheelEvent(QWheelEvent *event) override;
 
 private:
-	struct CellPos {
-		int row = 0;
-		int column = 0;
-	};
-
-	void updateMetrics();
-	void updateSelection(const QPoint &pos);
-	bool hasSelection() const;
-	QString selectedText() const;
-	void clearSelection();
-	CellPos cellFromPoint(const QPoint &pos) const;
-	QByteArray keyToSequence(QKeyEvent *event) const;
-	void scrollToLine(int line);
-	void drawSearchHighlights(QPainter &painter, const QString &line, int row);
-	void drawCursor(QPainter &painter, int startLine);
-	void paintRowBackgrounds(QPainter &painter, const TerminalBuffer *buffer, int row, int cols);
-	void paintRowSelection(QPainter &painter, int row, int cols);
-	void paintRowText(QPainter &painter, const TerminalBuffer *buffer, int row, int cols, int y);
-    void setCellFont(QPainter &painter, const TerminalBuffer::Cell &cell) const;
-    void drawCellGlyph(QPainter &painter, const TerminalBuffer::Cell &cell, int x, int y) const;
-    void drawCellDecorations(QPainter &painter, const TerminalBuffer::Cell &cell, int x, int row) const;
-    bool isSelectionReversed(const CellPos &start, const CellPos &end) const;
-    static bool isCellVisuallyEmpty(const TerminalBuffer::Cell &cell);
-    QString rowSelectedText(const TerminalBuffer *buffer, int row, const CellPos &start, const CellPos &end) const;
-	TerminalSession *m_session = nullptr;
-	TerminalConfig *m_config = nullptr;
-
 	QFont m_font;
 	QColor m_background;
 	QColor m_foreground;
 	QColor m_selection;
 	QColor m_searchHighlight;
 	QColor m_cursorColor;
-
-	int m_cellWidth = 8;
-	int m_cellHeight = 16;
-
-	int m_scrollOffset = 0;
-	bool m_userScroll = false;
-
-	bool m_selecting = false;
-	CellPos m_selectStart;
-	CellPos m_selectEnd;
-
 	QString m_searchTerm;
 	TerminalBuffer::Match m_searchMatch;
+
+	void updateMetrics();
+	void scrollToLine(int line);
+	void drawSearchHighlights(QPainter &painter, const QString &line, int row);
+	void drawCursor(QPainter &painter, int startLine);
+	void paintRowBackgrounds(QPainter &painter, const TerminalBuffer *buffer, int row, int cols);
+	void paintRowSelection(QPainter &painter, int row, int cols);
+	void paintRowText(QPainter &painter, const TerminalBuffer *buffer, int row, int cols, int y);
+	void setCellFont(QPainter &painter, const TerminalBuffer::Cell &cell) const;
+	void drawCellGlyph(QPainter &painter, const TerminalBuffer::Cell &cell, int x, int y) const;
+	void drawCellDecorations(QPainter &painter, const TerminalBuffer::Cell &cell, int x, int row) const;
+	static bool isCellVisuallyEmpty(const TerminalBuffer::Cell &cell);
 };
 
 struct TerminalQuadVertex {
@@ -641,7 +655,7 @@ private:
 	VulkanRenderer *m_renderer = nullptr;
 };
 
-class VulkanTerminalView : public TerminalViewBase {
+class VulkanTerminalView : public TerminalViewCommon {
 	Q_OBJECT
 
 public:
@@ -650,35 +664,11 @@ public:
 
 	void setSearchTerm(const QString &term) override;
 	bool findNext(bool forward) override;
-	void copySelection() override;
-	void pasteClipboard() override;
-	TerminalSession *session() const override;
-
-protected:
-	void keyPressEvent(QKeyEvent *event) override;
-	void inputMethodEvent(QInputMethodEvent *event) override;
-	void wheelEvent(QWheelEvent *event) override;
-	void focusInEvent(QFocusEvent *event) override;
-	void mousePressEvent(QMouseEvent *event) override;
-	void mouseMoveEvent(QMouseEvent *event) override;
-	void mouseReleaseEvent(QMouseEvent *event) override;
 
 private:
 	void updateFrame();
 	void connectVulkanSignals();
-	struct CellPos {
-		int row = 0;
-		int column = 0;
-	};
-	CellPos cellFromPoint(const QPoint &pos) const;
-	void updateSelection(const QPoint &pos);
-	bool hasSelection() const;
-	QString selectedText() const;
-	bool isSelectionReversed(const CellPos &start, const CellPos &end) const;
-	QString selectedRow(const QStringList &lines, int row, const CellPos &start, const CellPos &end) const;
 
-	TerminalSession *m_session = nullptr;
-	TerminalConfig *m_config = nullptr;
 
 	QVulkanInstance m_instance;
 	VulkanTerminalWindow *m_window = nullptr;

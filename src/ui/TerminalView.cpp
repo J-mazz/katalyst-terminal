@@ -3,9 +3,7 @@ import std;
 
 TerminalView::TerminalView(TerminalSession *session, TerminalConfig *config,
                            QWidget *parent)
-    : TerminalViewBase(parent), m_session(session), m_config(config) {
-  setFocusPolicy(Qt::StrongFocus);
-  setAttribute(Qt::WA_InputMethodEnabled, true);
+    : TerminalViewCommon(session, config, parent) {
 
   const auto profile = m_config->defaultProfile();
   m_font = profile.font;

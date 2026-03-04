@@ -22,3 +22,5 @@ build_output.txt
 *.class
 .cache/
 build*.txt
+gcm.cache/terminal.ansi.color.gcm
+gcm.cache/terminal.sgr.param.gcm
