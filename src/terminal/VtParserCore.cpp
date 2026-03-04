@@ -7,6 +7,7 @@ struct VtParserCore {
   enum class State {
     Normal,
     Escape,
+    CharsetDesignation,
     Csi,
     Osc,
     OscEscape
@@ -275,6 +276,10 @@ void handleEscapeByte(VtParserCore *core, TerminalBuffer *buffer, char ch) {
     core->params.clear();
     core->currentParam = -1;
     core->csiPrivate = false;
+  } else if (ch == '(') {
+    // Character set selection sequence (e.g. ESC ( B, ESC ( 0).
+    // Consume the following designator byte silently.
+    core->state = VtParserCore::State::CharsetDesignation;
   } else if (ch == ']') {
     core->state = VtParserCore::State::Osc;
     core->oscString.clear();
@@ -322,6 +327,9 @@ bool feedVtParserCore(VtParserCore *core, TerminalBuffer *buffer,
     switch (core->state) {
       case VtParserCore::State::Normal:     handleNormalByte(core, buffer, raw);         break;
       case VtParserCore::State::Escape:     handleEscapeByte(core, buffer, ch);          break;
+      case VtParserCore::State::CharsetDesignation:
+        core->state = VtParserCore::State::Normal;
+        break;
       case VtParserCore::State::Csi:        handleCsiByte(core, buffer, ch);             break;
       case VtParserCore::State::Osc:        titleChanged |= handleOscByte(core, raw, titleOut);         break;
       case VtParserCore::State::OscEscape:  titleChanged |= handleOscEscapeByte(core, ch, titleOut);    break;

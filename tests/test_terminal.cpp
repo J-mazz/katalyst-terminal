@@ -18,6 +18,7 @@ private slots:
   void testTerminalBufferAlternateScreen();
   void testVtParserFeedAndTitle();
   void testVtParserControlAndCsiCoverage();
+  void testVtParserCharsetDesignationConsumed();
   void testVtParserPrivateModeAndScrollRegion();
   void testTerminalSessionBasics();
   void testTerminalSessionStartShellAndInput();
@@ -282,6 +283,21 @@ void TestTerminal::testVtParserControlAndCsiCoverage() {
 
   parser.feed("\x1b]2;TitleByST\x1b\\");
   QVERIFY(true);
+}
+
+void TestTerminal::testVtParserCharsetDesignationConsumed() {
+  TerminalBuffer buffer;
+  buffer.resize(10, 2);
+  VtParser parser(&buffer);
+
+  parser.feed("A\x1b(BZ");
+  QCOMPARE(buffer.cellAt(0, 0).ch, QLatin1Char('A'));
+  QCOMPARE(buffer.cellAt(0, 1).ch, QLatin1Char('Z'));
+  QCOMPARE(buffer.cellAt(0, 2).ch, QLatin1Char(' '));
+
+  parser.feed("\x1b(0Q");
+  QCOMPARE(buffer.cellAt(0, 2).ch, QLatin1Char('Q'));
+  QCOMPARE(buffer.cellAt(0, 3).ch, QLatin1Char(' '));
 }
 
 void TestTerminal::testVtParserPrivateModeAndScrollRegion() {

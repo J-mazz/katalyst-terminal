@@ -170,7 +170,8 @@ void TerminalBuffer::setBracketedPasteMode(bool enabled) {
 
 void TerminalBuffer::setScrollbackLimit(int lines) {
   m_scrollbackLimit = qMax(0, lines);
-  while (m_scrollback.size() > m_scrollbackLimit) {
+  const auto limit = static_cast<decltype(m_scrollback.size())>(m_scrollbackLimit);
+  while (m_scrollback.size() > limit) {
     m_scrollback.pop_front();
   }
 }
@@ -558,7 +559,8 @@ void TerminalBuffer::pushScrollback(const QVector<Cell> &line) {
     return;
   }
   m_scrollback.push_back(line);
-  while (m_scrollback.size() > m_scrollbackLimit) {
+  const auto limit = static_cast<decltype(m_scrollback.size())>(m_scrollbackLimit);
+  while (m_scrollback.size() > limit) {
     m_scrollback.pop_front();
   }
 }
