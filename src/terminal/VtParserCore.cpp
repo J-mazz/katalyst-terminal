@@ -15,6 +15,7 @@ struct VtParserCore {
   State state = State::Normal;
   QList<int> params;
   int currentParam = -1;
+  bool csiPrivate = false;
   QStringDecoder utf8Decoder{QStringDecoder::Utf8};
   QString oscString;
 };
@@ -148,7 +149,41 @@ void handleCsiCommand(VtParserCore *core, TerminalBuffer *buffer, char command) 
       break;
     }
     case 'm': applySgrParams(core->params, buffer); break;
+    case 'r': {
+      const int top = param(0, 1);
+      const int bottom = param(1, buffer->rows());
+      buffer->setScrollRegion(top - 1, bottom - 1);
+      break;
+    }
     default: break;
+  }
+  core->params.clear();
+}
+
+void handlePrivateModeCommand(VtParserCore *core, TerminalBuffer *buffer, char command) {
+  if (command != 'h' && command != 'l') {
+    core->params.clear();
+    return;
+  }
+  const bool enable = (command == 'h');
+  for (int mode : core->params) {
+    if (mode <= 0) {
+      continue;
+    }
+    switch (mode) {
+      case 1049:
+        if (enable) {
+          buffer->enterAlternateScreen();
+        } else {
+          buffer->exitAlternateScreen();
+        }
+        break;
+      case 25:
+        buffer->setCursorVisible(enable);
+        break;
+      default:
+        break;
+    }
   }
   core->params.clear();
 }
@@ -177,14 +212,21 @@ void handleNormalByte(VtParserCore *core, TerminalBuffer *buffer, unsigned char 
 }
 
 void handleCsiByte(VtParserCore *core, TerminalBuffer *buffer, char ch) {
-  if (ch >= '0' && ch <= '9') {
+  if (ch == '?' && core->params.isEmpty() && core->currentParam < 0) {
+    core->csiPrivate = true;
+  } else if (ch >= '0' && ch <= '9') {
     if (core->currentParam < 0) core->currentParam = 0;
     core->currentParam = core->currentParam * 10 + (ch - '0');
   } else if (ch == ';') {
     finalizeParam(core);
   } else {
     finalizeParam(core);
-    handleCsiCommand(core, buffer, ch);
+    if (core->csiPrivate) {
+      handlePrivateModeCommand(core, buffer, ch);
+    } else {
+      handleCsiCommand(core, buffer, ch);
+    }
+    core->csiPrivate = false;
     core->state = VtParserCore::State::Normal;
   }
 }
@@ -208,6 +250,7 @@ void handleEscapeByte(VtParserCore *core, char ch) {
     core->state = VtParserCore::State::Csi;
     core->params.clear();
     core->currentParam = -1;
+    core->csiPrivate = false;
   } else if (ch == ']') {
     core->state = VtParserCore::State::Osc;
     core->oscString.clear();
@@ -235,6 +278,7 @@ void resetVtParserCore(VtParserCore *core) {
   core->state = VtParserCore::State::Normal;
   core->params.clear();
   core->currentParam = -1;
+  core->csiPrivate = false;
   core->utf8Decoder.resetState();
   core->oscString.clear();
 }

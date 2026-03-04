@@ -176,6 +176,12 @@ public:
 	void cursorForward(int n);
 	void cursorBack(int n);
 	void cursorToColumn(int col);
+	void setScrollRegion(int top, int bottom);
+	void resetScrollRegion();
+	void enterAlternateScreen();
+	void exitAlternateScreen();
+	void setCursorVisible(bool visible);
+	bool cursorVisible() const;
 	int cursorRow() const;
 	int cursorColumn() const;
 
@@ -199,20 +205,34 @@ private:
 	void clampCursor();
 	void pushScrollback(const QVector<Cell> &line);
 	QString lineToString(const QVector<Cell> &line) const;
+	void scrollRegionUp(int top, int bottom);
+	QVector<QVector<Cell>> &activeScreen();
+	const QVector<QVector<Cell>> &activeScreen() const;
+	int &activeScreenStart();
+	int activeScreenStart() const;
 
 	QVector<Cell>& screenRow(int row) {
-		return m_screen[(m_screenStart + row) % m_rows];
+		auto &screen = activeScreen();
+		return screen[(activeScreenStart() + row) % m_rows];
 	}
 	const QVector<Cell>& screenRow(int row) const {
-		return m_screen[(m_screenStart + row) % m_rows];
+		const auto &screen = activeScreen();
+		return screen[(activeScreenStart() + row) % m_rows];
 	}
 
 	int m_columns = 80;
 	int m_rows = 24;
 	int m_cursorRow = 0;
 	int m_cursorColumn = 0;
+	int m_savedCursorRow = 0;
+	int m_savedCursorColumn = 0;
 	int m_scrollbackLimit = 2000;
-	int m_screenStart = 0;
+	int m_normalScreenStart = 0;
+	int m_alternateScreenStart = 0;
+	int m_scrollTop = 0;
+	int m_scrollBottom = 23;
+	bool m_useAlternateScreen = false;
+	bool m_cursorVisible = true;
 
 	QColor m_defaultFg = QColor(220, 220, 220);
 	QColor m_defaultBg = QColor(20, 22, 26);
@@ -226,7 +246,8 @@ private:
 	bool m_pendingWrap = false;
 
 	std::deque<QVector<Cell>> m_scrollback;
-	QVector<QVector<Cell>> m_screen;
+	QVector<QVector<Cell>> m_normalScreen;
+	QVector<QVector<Cell>> m_alternateScreen;
 };
 
 class TerminalConfig {

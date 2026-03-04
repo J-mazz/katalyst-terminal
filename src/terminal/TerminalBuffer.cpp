@@ -3,17 +3,21 @@ import std;
 
 TerminalBuffer::TerminalBuffer() {
   ensureScreenSize();
+  resetScrollRegion();
 }
 
 void TerminalBuffer::resize(int columns, int rows) {
   m_columns = qMax(1, columns);
   m_rows = qMax(1, rows);
+  m_scrollBottom = qBound(0, m_scrollBottom, m_rows - 1);
+  if (m_scrollTop >= m_scrollBottom) {
+    resetScrollRegion();
+  }
   ensureScreenSize();
   clampCursor();
 }
 
 void TerminalBuffer::clear() {
-  m_scrollback.clear();
   for (int i = 0; i < m_rows; ++i) {
     screenRow(i) = blankRow(m_currentFg, m_currentBg);
   }
@@ -153,16 +157,24 @@ void TerminalBuffer::putChar(QChar ch) {
 }
 
 void TerminalBuffer::newline() {
+  m_pendingWrap = false;
   m_cursorColumn = 0;
-  if (m_cursorRow == m_rows - 1) {
-    // Ring buffer scroll: push logical row 0 to scrollback, overwrite it with a
-    // blank row, then advance the ring start so the old row 0 becomes the new
-    // last row. O(cols) — no element shifting.
-    pushScrollback(screenRow(0));
-    screenRow(0) = blankRow(m_currentFg, m_currentBg);
-    m_screenStart = (m_screenStart + 1) % m_rows;
+  if (m_cursorRow >= m_scrollTop && m_cursorRow <= m_scrollBottom) {
+    if (m_cursorRow == m_scrollBottom) {
+      scrollRegionUp(m_scrollTop, m_scrollBottom);
+    } else {
+      m_cursorRow++;
+    }
   } else {
-    m_cursorRow++;
+    if (m_cursorRow == m_rows - 1) {
+      if (!m_useAlternateScreen) {
+        pushScrollback(screenRow(0));
+      }
+      screenRow(0) = blankRow(m_currentFg, m_currentBg);
+      activeScreenStart() = (activeScreenStart() + 1) % m_rows;
+    } else {
+      m_cursorRow++;
+    }
   }
 }
 
@@ -216,6 +228,62 @@ void TerminalBuffer::cursorToColumn(int col) {
   m_cursorColumn = qBound(0, col, m_columns - 1);
 }
 
+void TerminalBuffer::setScrollRegion(int top, int bottom) {
+  const int minTop = qBound(0, top, m_rows - 1);
+  const int minBottom = qBound(0, bottom, m_rows - 1);
+  if (minTop >= minBottom) {
+    resetScrollRegion();
+    return;
+  }
+  m_scrollTop = minTop;
+  m_scrollBottom = minBottom;
+  m_cursorRow = 0;
+  m_cursorColumn = 0;
+  m_pendingWrap = false;
+}
+
+void TerminalBuffer::resetScrollRegion() {
+  m_scrollTop = 0;
+  m_scrollBottom = qMax(0, m_rows - 1);
+  m_cursorRow = 0;
+  m_cursorColumn = 0;
+  m_pendingWrap = false;
+}
+
+void TerminalBuffer::enterAlternateScreen() {
+  if (m_useAlternateScreen) {
+    return;
+  }
+  m_savedCursorRow = m_cursorRow;
+  m_savedCursorColumn = m_cursorColumn;
+  m_useAlternateScreen = true;
+  ensureScreenSize();
+  m_alternateScreenStart = 0;
+  for (int i = 0; i < m_rows; ++i) {
+    screenRow(i) = blankRow(m_currentFg, m_currentBg);
+  }
+  resetScrollRegion();
+}
+
+void TerminalBuffer::exitAlternateScreen() {
+  if (!m_useAlternateScreen) {
+    return;
+  }
+  m_useAlternateScreen = false;
+  ensureScreenSize();
+  m_cursorRow = qBound(0, m_savedCursorRow, m_rows - 1);
+  m_cursorColumn = qBound(0, m_savedCursorColumn, m_columns - 1);
+  resetScrollRegion();
+}
+
+void TerminalBuffer::setCursorVisible(bool visible) {
+  m_cursorVisible = visible;
+}
+
+bool TerminalBuffer::cursorVisible() const {
+  return m_cursorVisible;
+}
+
 int TerminalBuffer::cursorRow() const {
   return m_cursorRow;
 }
@@ -233,7 +301,10 @@ int TerminalBuffer::columns() const {
 }
 
 int TerminalBuffer::totalLines() const {
-  return m_scrollback.size() + m_screen.size();
+  if (m_useAlternateScreen) {
+    return m_rows;
+  }
+  return m_scrollback.size() + m_normalScreen.size();
 }
 
 QString TerminalBuffer::lineAt(int index) const {
@@ -243,7 +314,8 @@ QString TerminalBuffer::lineAt(int index) const {
   if (index < m_scrollback.size()) {
     return lineToString(m_scrollback[index]);
   }
-  return lineToString(screenRow(index - (int)m_scrollback.size()));
+  const int base = m_useAlternateScreen ? 0 : (int)m_scrollback.size();
+  return lineToString(screenRow(index - base));
 }
 
 TerminalBuffer::Cell TerminalBuffer::cellAt(int index, int column) const {
@@ -251,9 +323,9 @@ TerminalBuffer::Cell TerminalBuffer::cellAt(int index, int column) const {
     return Cell{};
   }
   const QVector<Cell> &line =
-      (index < (int)m_scrollback.size())
+      (!m_useAlternateScreen && index < (int)m_scrollback.size())
           ? m_scrollback[index]
-          : screenRow(index - (int)m_scrollback.size());
+        : screenRow(index - (m_useAlternateScreen ? 0 : (int)m_scrollback.size()));
   if (column < 0 || column >= line.size()) {
     return Cell{};
   }
@@ -305,9 +377,12 @@ bool TerminalBuffer::findNext(const QString &term, int startLine,
 
 QStringList TerminalBuffer::snapshot(int scrollOffset) const {
   QStringList allLines;
-  allLines.reserve(m_scrollback.size() + m_screen.size());
-  for (const auto &line : m_scrollback) {
-    allLines.push_back(lineToString(line));
+  const int extra = m_useAlternateScreen ? 0 : (int)m_scrollback.size();
+  allLines.reserve(extra + m_rows);
+  if (!m_useAlternateScreen) {
+    for (const auto &line : m_scrollback) {
+      allLines.push_back(lineToString(line));
+    }
   }
   for (int i = 0; i < m_rows; ++i) {
     allLines.push_back(lineToString(screenRow(i)));
@@ -334,28 +409,33 @@ QVector<TerminalBuffer::Cell> TerminalBuffer::blankRow(const QColor &fg,
 }
 
 void TerminalBuffer::ensureScreenSize() {
-  // Reorder into logical order before resizing so screenRow() accesses remain
-  // valid regardless of current m_screenStart offset.
-  if (m_screenStart != 0 && !m_screen.isEmpty()) {
-    QVector<QVector<Cell>> ordered;
-    ordered.reserve(m_screen.size());
-    for (int i = 0; i < (int)m_screen.size(); ++i) {
-      ordered.push_back(std::move(screenRow(i)));
+  auto normalizeScreen = [&](QVector<QVector<Cell>> &screen, int &screenStart) {
+    if (screenStart != 0 && !screen.isEmpty()) {
+      QVector<QVector<Cell>> ordered;
+      ordered.reserve(screen.size());
+      const int oldSize = screen.size();
+      screenStart = ((screenStart % oldSize) + oldSize) % oldSize;
+      for (int i = 0; i < (int)screen.size(); ++i) {
+        ordered.push_back(std::move(screen[(screenStart + i) % oldSize]));
+      }
+      screen = std::move(ordered);
+      screenStart = 0;
     }
-    m_screen = std::move(ordered);
-    m_screenStart = 0;
-  }
-  while (m_screen.size() < m_rows) {
-    m_screen.push_back(blankRow(m_defaultFg, m_defaultBg));
-  }
-  while (m_screen.size() > m_rows) {
-    m_screen.pop_back();
-  }
-  for (auto &line : m_screen) {
-    if (line.size() != m_columns) {
-      line = blankRow(m_defaultFg, m_defaultBg);
+    while (screen.size() < m_rows) {
+      screen.push_back(blankRow(m_defaultFg, m_defaultBg));
     }
-  }
+    while (screen.size() > m_rows) {
+      screen.pop_back();
+    }
+    for (auto &line : screen) {
+      if (line.size() != m_columns) {
+        line = blankRow(m_defaultFg, m_defaultBg);
+      }
+    }
+  };
+
+  normalizeScreen(m_normalScreen, m_normalScreenStart);
+  normalizeScreen(m_alternateScreen, m_alternateScreenStart);
 }
 
 void TerminalBuffer::clampCursor() {
@@ -380,4 +460,39 @@ QString TerminalBuffer::lineToString(const QVector<Cell> &line) const {
     text.append(cell.ch);
   }
   return text;
+}
+
+void TerminalBuffer::scrollRegionUp(int top, int bottom) {
+  if (top < 0 || bottom >= m_rows || top >= bottom) {
+    return;
+  }
+  if (top == 0 && bottom == m_rows - 1) {
+    if (!m_useAlternateScreen) {
+      pushScrollback(screenRow(0));
+    }
+    screenRow(0) = blankRow(m_currentFg, m_currentBg);
+    activeScreenStart() = (activeScreenStart() + 1) % m_rows;
+    return;
+  }
+
+  for (int row = top; row < bottom; ++row) {
+    screenRow(row) = screenRow(row + 1);
+  }
+  screenRow(bottom) = blankRow(m_currentFg, m_currentBg);
+}
+
+QVector<QVector<TerminalBuffer::Cell>> &TerminalBuffer::activeScreen() {
+  return m_useAlternateScreen ? m_alternateScreen : m_normalScreen;
+}
+
+const QVector<QVector<TerminalBuffer::Cell>> &TerminalBuffer::activeScreen() const {
+  return m_useAlternateScreen ? m_alternateScreen : m_normalScreen;
+}
+
+int &TerminalBuffer::activeScreenStart() {
+  return m_useAlternateScreen ? m_alternateScreenStart : m_normalScreenStart;
+}
+
+int TerminalBuffer::activeScreenStart() const {
+  return m_useAlternateScreen ? m_alternateScreenStart : m_normalScreenStart;
 }

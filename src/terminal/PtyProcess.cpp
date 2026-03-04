@@ -98,7 +98,9 @@ void PtyProcess::handleReadyRead() {
 
 void PtyProcess::closeMaster() {
   if (m_notifier) {
-    m_notifier->deleteLater();
+    m_notifier->setEnabled(false);
+    m_notifier->disconnect(this);
+    delete m_notifier;
     m_notifier = nullptr;
   }
   if (m_masterFd >= 0) {

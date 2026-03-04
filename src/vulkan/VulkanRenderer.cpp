@@ -298,7 +298,7 @@ void VulkanRenderer::updateFromBuffer(const TerminalBuffer *buffer,
   Selection normalized = selection;
   normalizeSelection(normalized);
 
-  const bool cursorVisible = (scrollOffset == 0);
+  const bool cursorVisible = (scrollOffset == 0) && buffer->cursorVisible();
   const int cursorRow = buffer->cursorRow();
   const int cursorCol = buffer->cursorColumn();
 

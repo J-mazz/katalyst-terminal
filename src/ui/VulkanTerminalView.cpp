@@ -85,18 +85,7 @@ void VulkanTerminalView::inputMethodEvent(QInputMethodEvent *event) {
 }
 
 void VulkanTerminalView::wheelEvent(QWheelEvent *event) {
-  if (!m_session || !m_session->buffer()) {
-    return;
-  }
-  const int delta = event->angleDelta().y() / 120;
-  if (delta == 0) {
-    return;
-  }
-
-  int maxOffset = qMax(0, m_session->buffer()->totalLines() -
-                              m_session->buffer()->rows());
-  m_scrollOffset = qBound(0, m_scrollOffset - delta * 3, maxOffset);
-  m_userScroll = (m_scrollOffset != 0);
+  TerminalViewCommon::wheelEvent(event);
   updateFrame();
 }
 

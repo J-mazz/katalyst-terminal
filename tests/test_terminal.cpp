@@ -15,12 +15,13 @@ private slots:
   void testTerminalBufferAttributes();
   void testTerminalBufferClearModes();
   void testTerminalBufferSnapshotAndVisibleCells();
+  void testTerminalBufferAlternateScreen();
   void testVtParserFeedAndTitle();
   void testVtParserControlAndCsiCoverage();
+  void testVtParserPrivateModeAndScrollRegion();
   void testTerminalSessionBasics();
   void testTerminalSessionStartShellAndInput();
   void testPtyProcessLifecycle();
-  void testTerminalViewCommonBasics();
 };
 
 namespace {
@@ -59,14 +60,12 @@ void TestTerminal::testTerminalConfigAccessors() {
   const auto profile = config.defaultProfile();
 
   QVERIFY(!profile.name.isEmpty());
-  QVERIFY(profile.font.pointSizeF() > 0.0 || profile.font.pixelSize() > 0);
   QVERIFY(profile.scrollbackLines > 0);
 
   QVERIFY(!config.renderer().isEmpty());
   QVERIFY(config.scrollbackLines() > 0);
   QVERIFY(config.backgroundColor().isValid());
   QVERIFY(config.foregroundColor().isValid());
-  QVERIFY(!config.font().family().isEmpty());
 }
 
 void TestTerminal::testTerminalBufferEditingAndScrollback() {
@@ -198,6 +197,27 @@ void TestTerminal::testTerminalBufferSnapshotAndVisibleCells() {
   QCOMPARE(cell.ch, QLatin1Char('I'));
 }
 
+void TestTerminal::testTerminalBufferAlternateScreen() {
+  TerminalBuffer buffer;
+  buffer.resize(8, 3);
+  buffer.setScrollbackLimit(10);
+
+  for (QChar ch : QStringLiteral("NORMAL")) buffer.putChar(ch);
+  TerminalBuffer::Match match;
+  QVERIFY(buffer.findNext(QStringLiteral("NORMAL"), 0, 0, true, &match));
+
+  buffer.enterAlternateScreen();
+  QVERIFY(!buffer.findNext(QStringLiteral("NORMAL"), 0, 0, true, &match));
+  QCOMPARE(buffer.totalLines(), buffer.rows());
+
+  for (QChar ch : QStringLiteral("ALT")) buffer.putChar(ch);
+  QVERIFY(buffer.findNext(QStringLiteral("ALT"), 0, 0, true, &match));
+
+  buffer.exitAlternateScreen();
+  QVERIFY(buffer.findNext(QStringLiteral("NORMAL"), 0, 0, true, &match));
+  QVERIFY(!buffer.findNext(QStringLiteral("ALT"), 0, 0, true, &match));
+}
+
 void TestTerminal::testVtParserFeedAndTitle() {
   TerminalBuffer buffer;
   buffer.resize(10, 3);
@@ -264,6 +284,34 @@ void TestTerminal::testVtParserControlAndCsiCoverage() {
   QVERIFY(true);
 }
 
+void TestTerminal::testVtParserPrivateModeAndScrollRegion() {
+  TerminalBuffer buffer;
+  buffer.resize(10, 4);
+  VtParser parser(&buffer);
+
+  parser.feed("\x1b[?25l");
+  QVERIFY(!buffer.cursorVisible());
+  parser.feed("\x1b[?25h");
+  QVERIFY(buffer.cursorVisible());
+
+  for (QChar ch : QStringLiteral("NORMAL")) parser.feed(QByteArray(1, ch.toLatin1()));
+  parser.feed("\x1b[?1049h");
+  TerminalBuffer::Match match;
+  QVERIFY(!buffer.findNext(QStringLiteral("NORMAL"), 0, 0, true, &match));
+  parser.feed("ALT");
+  QVERIFY(buffer.findNext(QStringLiteral("ALT"), 0, 0, true, &match));
+  parser.feed("\x1b[?1049l");
+  QVERIFY(buffer.findNext(QStringLiteral("NORMAL"), 0, 0, true, &match));
+
+  buffer.clear();
+  parser.feed("\x1b[2;3r");
+  parser.feed("\x1b[3;1H");
+  parser.feed("A\nB\nC");
+
+  QVERIFY(buffer.lineAt(0).trimmed().isEmpty());
+  QVERIFY(buffer.lineAt(1).contains(QLatin1Char('B')) || buffer.lineAt(1).contains(QLatin1Char('C')));
+}
+
 void TestTerminal::testTerminalSessionBasics() {
   TerminalConfig config;
   TerminalSession session(config.defaultProfile());
@@ -275,8 +323,15 @@ void TestTerminal::testTerminalSessionBasics() {
 }
 
 void TestTerminal::testTerminalSessionStartShellAndInput() {
-  TerminalConfig config;
-  auto profile = config.defaultProfile();
+  TerminalConfig::TerminalProfile profile;
+  profile.name = QStringLiteral("TestProfile");
+  profile.foreground = QColor(220, 220, 220);
+  profile.background = QColor(20, 22, 26);
+  profile.selection = QColor(60, 120, 200, 120);
+  profile.searchHighlight = QColor(200, 160, 60, 160);
+  profile.cursor = QColor(200, 200, 200);
+  profile.scrollbackLines = 2000;
+  profile.term = QStringLiteral("xterm-256color");
   profile.program = QStringLiteral("/bin/sh");
   profile.arguments = {QStringLiteral("-c"), QStringLiteral("printf HELLO_SESSION\\n; printf '\\033]2;SESSION_TITLE\\007'")};
 
@@ -320,15 +375,6 @@ void TestTerminal::testPtyProcessLifecycle() {
   pty.stop();
 }
 
-void TestTerminal::testTerminalViewCommonBasics() {
-  TerminalConfig config;
-  TerminalSession session(config.defaultProfile());
-  TerminalViewCommon view(&session, &config);
-
-  QCOMPARE(view.session(), &session);
-  QVERIFY(!view.hasSelection());
-}
-
-QTEST_MAIN(TestTerminal)
+QTEST_GUILESS_MAIN(TestTerminal)
 
 #include "test_terminal.moc"

@@ -189,6 +189,9 @@ void TerminalView::drawCursor(QPainter &painter, int startLine) {
     return;
   }
   const TerminalBuffer *buffer = m_session->buffer();
+  if (!buffer->cursorVisible()) {
+    return;
+  }
   const int cursorLine = buffer->cursorRow() +
                          (buffer->totalLines() - buffer->rows());
   if (cursorLine < startLine ||

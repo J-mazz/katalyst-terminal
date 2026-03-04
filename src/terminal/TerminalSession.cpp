@@ -19,12 +19,7 @@ TerminalSession::TerminalSession(const TerminalConfig::TerminalProfile &profile,
 
 namespace {
 QStringList buildEnv(const TerminalConfig::TerminalProfile &profile) {
-  QStringList env;
-  const QProcessEnvironment systemEnv = QProcessEnvironment::systemEnvironment();
-  for (const QString &key : systemEnv.keys())
-    env.push_back(key + QLatin1Char('=') + systemEnv.value(key));
-  for (const QString &entry : profile.env)
-    env.push_back(entry);
+  QStringList env = profile.env;
   if (!profile.term.isEmpty())
     env.push_back(QStringLiteral("TERM=") + profile.term);
   return env;
