@@ -20,11 +20,15 @@ void VulkanTerminalWindow::exposeEvent(QExposeEvent *) {
   if (!isExposed() || !m_renderer || !m_renderer->isReady()) {
     return;
   }
+  if (!m_exposed) {
+    m_exposed = true;
+    m_renderer->resize(width(), height());
+  }
   m_renderer->render();
 }
 
 void VulkanTerminalWindow::resizeEvent(QResizeEvent *) {
-  if (!m_renderer || !m_renderer->isReady()) {
+  if (!m_exposed || !m_renderer || !m_renderer->isReady()) {
     return;
   }
   m_renderer->resize(width(), height());

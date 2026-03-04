@@ -703,6 +703,7 @@ protected:
 private:
 	QVulkanInstance *m_instance = nullptr;
 	VulkanRenderer *m_renderer = nullptr;
+	bool m_exposed = false;
 };
 
 class VulkanTerminalView : public TerminalViewCommon {
@@ -711,6 +712,7 @@ class VulkanTerminalView : public TerminalViewCommon {
 public:
 	VulkanTerminalView(TerminalSession *session, TerminalConfig *config,
 										 QWidget *parent = nullptr);
+	bool isInitialized() const;
 
 	void setSearchTerm(const QString &term) override;
 	bool findNext(bool forward) override;

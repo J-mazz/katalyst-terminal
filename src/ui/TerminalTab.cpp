@@ -98,7 +98,14 @@ TerminalViewBase *TerminalTab::createView() {
   auto *session = new TerminalSession(profile, this);
   TerminalViewBase *view = nullptr;
   if (m_config->renderer() == QStringLiteral("Vulkan")) {
-    view = new VulkanTerminalView(session, m_config, this);
+    auto *vkView = new VulkanTerminalView(session, m_config, this);
+    if (vkView->isInitialized()) {
+      view = vkView;
+    } else {
+      qWarning("TerminalTab: Vulkan unavailable, falling back to raster view");
+      delete vkView;
+      view = new TerminalView(session, m_config, this);
+    }
   } else {
     view = new TerminalView(session, m_config, this);
   }

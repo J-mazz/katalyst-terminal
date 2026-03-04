@@ -9,6 +9,9 @@ struct SwapchainSupport {
 };
 
 VkSurfaceFormatKHR chooseSwapSurfaceFormat(const QVector<VkSurfaceFormatKHR>& availableFormats) {
+  if (availableFormats.isEmpty()) {
+    return {VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+  }
   for (const auto& availableFormat : availableFormats) {
     if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
         availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
@@ -19,6 +22,9 @@ VkSurfaceFormatKHR chooseSwapSurfaceFormat(const QVector<VkSurfaceFormatKHR>& av
 }
 
 VkPresentModeKHR chooseSwapPresentMode(const QVector<VkPresentModeKHR>& availablePresentModes) {
+  if (availablePresentModes.isEmpty()) {
+    return VK_PRESENT_MODE_FIFO_KHR;
+  }
   for (const auto& availablePresentMode : availablePresentModes) {
     if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
       return availablePresentMode;
@@ -532,6 +538,13 @@ bool VulkanRenderer::createSwapchainImageViews() {
 
 bool VulkanRenderer::createSwapchain() {
   SwapchainSupport support = querySwapchainSupport(m_physicalDevice, m_surface);
+
+  if (support.formats.isEmpty() || support.presentModes.isEmpty()) {
+    qWarning("VulkanRenderer: swapchain unsupported (formats=%d, presentModes=%d)",
+             static_cast<int>(support.formats.size()),
+             static_cast<int>(support.presentModes.size()));
+    return false;
+  }
 
   VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(support.formats);
   VkPresentModeKHR presentMode = chooseSwapPresentMode(support.presentModes);

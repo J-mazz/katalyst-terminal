@@ -41,6 +41,10 @@ VulkanTerminalView::VulkanTerminalView(TerminalSession *session,
 connectVulkanSignals();
 }
 
+bool VulkanTerminalView::isInitialized() const {
+  return m_renderer && m_renderer->isReady() && m_window && m_container;
+}
+
 void VulkanTerminalView::connectVulkanSignals() {
     connect(m_window, &VulkanTerminalWindow::keyInput,       this, &VulkanTerminalView::keyPressEvent);
     connect(m_window, &VulkanTerminalWindow::mousePressed,   this, &VulkanTerminalView::mousePressEvent);
