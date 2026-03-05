@@ -17,14 +17,16 @@ void VulkanTerminalWindow::setRenderer(VulkanRenderer *renderer) {
 }
 
 void VulkanTerminalWindow::exposeEvent(QExposeEvent *) {
-  if (!isExposed() || !m_renderer || !m_renderer->isReady()) {
+  if (!isExposed()) {
     return;
   }
   if (!m_exposed) {
     m_exposed = true;
-    m_renderer->resize(width(), height());
+    emit readyForInit();
   }
-  m_renderer->render();
+  if (m_renderer && m_renderer->isReady()) {
+    m_renderer->render();
+  }
 }
 
 void VulkanTerminalWindow::resizeEvent(QResizeEvent *) {
@@ -39,6 +41,7 @@ void VulkanTerminalWindow::keyPressEvent(QKeyEvent *event) {
 }
 
 void VulkanTerminalWindow::mousePressEvent(QMouseEvent *event) {
+  requestActivate();
   emit mousePressed(event);
 }
 

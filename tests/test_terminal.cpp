@@ -11,6 +11,9 @@ private slots:
   void testTerminalConfigAccessors();
   void testTerminalBufferResizeAndCursor();
   void testTerminalBufferEditingAndScrollback();
+  void testTerminalBufferInsertDeleteOps();
+  void testTerminalBufferScrollRegionOps();
+  void testTerminalBufferSearchEdgeCases();
   void testTerminalBufferFindNext();
   void testTerminalBufferAttributes();
   void testTerminalBufferClearModes();
@@ -18,8 +21,12 @@ private slots:
   void testTerminalBufferAlternateScreen();
   void testVtParserFeedAndTitle();
   void testVtParserControlAndCsiCoverage();
+  void testVtParserEscOscAndUtf8Edges();
+  void testVtParserResetMidSequence();
   void testVtParserCharsetDesignationConsumed();
   void testVtParserPrivateModeAndScrollRegion();
+  void testSgrColorStateVerification();
+  void testCsiVpaAndCnlCpl();
   void testTerminalSessionBasics();
   void testTerminalSessionStartShellAndInput();
   void testPtyProcessLifecycle();
@@ -96,6 +103,88 @@ void TestTerminal::testTerminalBufferEditingAndScrollback() {
 
   buffer.tab();
   QCOMPARE(buffer.cursorColumn(), 4);
+}
+
+void TestTerminal::testTerminalBufferInsertDeleteOps() {
+  TerminalBuffer buffer;
+  buffer.resize(6, 3);
+
+  for (QChar ch : QStringLiteral("ABCDEF")) buffer.putChar(ch);
+  QCOMPARE(buffer.lineAt(0), QStringLiteral("ABCDEF"));
+
+  buffer.setCursorPosition(0, 2);
+  buffer.insertChars(2);
+  QCOMPARE(buffer.lineAt(0), QStringLiteral("AB  CD"));
+
+  buffer.setCursorPosition(0, 2);
+  buffer.deleteChars(2);
+  QCOMPARE(buffer.lineAt(0), QStringLiteral("ABCD  "));
+
+  buffer.setCursorPosition(0, 1);
+  buffer.eraseChars(3);
+  QCOMPARE(buffer.lineAt(0), QStringLiteral("A     "));
+
+  buffer.setCursorPosition(0, 10);
+  buffer.insertChars(3);
+  buffer.deleteChars(3);
+  QVERIFY(true);
+}
+
+void TestTerminal::testTerminalBufferScrollRegionOps() {
+  TerminalBuffer buffer;
+  buffer.resize(5, 4);
+
+  for (QChar ch : QStringLiteral("11111")) buffer.putChar(ch);
+  buffer.newline();
+  for (QChar ch : QStringLiteral("22222")) buffer.putChar(ch);
+  buffer.newline();
+  for (QChar ch : QStringLiteral("33333")) buffer.putChar(ch);
+  buffer.newline();
+  for (QChar ch : QStringLiteral("44444")) buffer.putChar(ch);
+
+  buffer.setScrollRegion(1, 2);
+  buffer.setCursorPosition(1, 0);
+  buffer.insertLines(1);
+  QVERIFY(buffer.lineAt(1).trimmed().isEmpty());
+  QVERIFY(buffer.lineAt(2).startsWith(QStringLiteral("22222")) ||
+          buffer.lineAt(2).startsWith(QStringLiteral("33333")));
+
+  buffer.setCursorPosition(1, 0);
+  buffer.deleteLines(1);
+  QVERIFY(buffer.lineAt(1).startsWith(QStringLiteral("22222")) ||
+          buffer.lineAt(1).startsWith(QStringLiteral("33333")));
+
+  buffer.setCursorPosition(1, 0);
+  buffer.reverseIndex();
+  QVERIFY(buffer.lineAt(1).trimmed().isEmpty() || buffer.lineAt(1).startsWith(QStringLiteral("22222")));
+
+  buffer.scrollUp();
+  buffer.scrollDown();
+
+  buffer.setScrollRegion(3, 1); // invalid => reset region path
+  buffer.resetScrollRegion();
+  buffer.setCursorPosition(0, 0);
+  buffer.saveCursor();
+  buffer.setCursorPosition(3, 4);
+  buffer.restoreCursor();
+  QCOMPARE(buffer.cursorRow(), 0);
+  QCOMPARE(buffer.cursorColumn(), 0);
+}
+
+void TestTerminal::testTerminalBufferSearchEdgeCases() {
+  TerminalBuffer buffer;
+  buffer.resize(8, 2);
+  for (QChar ch : QStringLiteral("abcdef")) buffer.putChar(ch);
+
+  QVERIFY(!buffer.findNext(QString(), 0, 0, true, nullptr));
+
+  TerminalBuffer::Match match;
+  QVERIFY(!buffer.findNext(QString(), 0, 0, true, &match));
+  QVERIFY(!buffer.findNext(QStringLiteral("cde"), 0, 100, true, &match));
+  QVERIFY(buffer.findNext(QStringLiteral("cde"), 0, 0, true, &match));
+  QCOMPARE(match.column, 2);
+  QVERIFY(buffer.findNext(QStringLiteral("abc"), 100, 100, false, &match));
+  QCOMPARE(match.column, 0);
 }
 
 void TestTerminal::testTerminalBufferFindNext() {
@@ -285,6 +374,56 @@ void TestTerminal::testVtParserControlAndCsiCoverage() {
   QVERIFY(true);
 }
 
+void TestTerminal::testVtParserEscOscAndUtf8Edges() {
+  TerminalBuffer buffer;
+  buffer.resize(12, 4);
+  VtParser parser(&buffer);
+  QSignalSpy titleSpy(&parser, &VtParser::titleChanged);
+
+  parser.feed("\x1b[?2004h");
+  QVERIFY(buffer.bracketedPasteMode());
+  parser.feed("\x1b[?2004l");
+  QVERIFY(!buffer.bracketedPasteMode());
+
+  parser.feed("\x1b[1;2H");
+  parser.feed("\x1b" "7");
+  parser.feed("\x1b[4;5H");
+  parser.feed("Q");
+  parser.feed("\x1b" "8");
+  parser.feed("R");
+  TerminalBuffer::Match restoreMatch;
+  QVERIFY(buffer.findNext(QStringLiteral("R"), 0, 0, true, &restoreMatch));
+
+  parser.feed("\x1b[2;3r");
+  parser.feed("\x1b[2;1H");
+  parser.feed("\x1bM");
+  QVERIFY(true);
+
+  QByteArray longOsc("\x1b]2;");
+  longOsc += QByteArray(9000, 'A');
+  longOsc += QByteArray("\x07");
+  parser.feed(longOsc);
+  QCOMPARE(titleSpy.count(), 0);
+
+  const QByteArray utf8 = QString::fromUtf8("é").toUtf8();
+  parser.feed(utf8);
+  TerminalBuffer::Match match;
+  QVERIFY(buffer.findNext(QString::fromUtf8("é"), 0, 0, true, &match));
+}
+
+void TestTerminal::testVtParserResetMidSequence() {
+  TerminalBuffer buffer;
+  buffer.resize(10, 2);
+  VtParser parser(&buffer);
+
+  parser.feed("\x1b[31"); // incomplete CSI
+  parser.reset();
+  parser.feed("mX");
+
+  QCOMPARE(buffer.cellAt(0, 0).ch, QLatin1Char('m'));
+  QCOMPARE(buffer.cellAt(0, 1).ch, QLatin1Char('X'));
+}
+
 void TestTerminal::testVtParserCharsetDesignationConsumed() {
   TerminalBuffer buffer;
   buffer.resize(10, 2);
@@ -326,6 +465,110 @@ void TestTerminal::testVtParserPrivateModeAndScrollRegion() {
 
   QVERIFY(buffer.lineAt(0).trimmed().isEmpty());
   QVERIFY(buffer.lineAt(1).contains(QLatin1Char('B')) || buffer.lineAt(1).contains(QLatin1Char('C')));
+}
+
+void TestTerminal::testSgrColorStateVerification() {
+  TerminalBuffer buffer;
+  buffer.resize(20, 5);
+  buffer.setDefaultColors(QColor(220, 220, 220), QColor(20, 22, 26));
+  VtParser parser(&buffer);
+
+  // Bold on → write char → verify bold
+  parser.feed("\x1b[1m");
+  parser.feed("B");
+  auto cell = buffer.cellAt(0, 0);
+  QCOMPARE(cell.ch, QLatin1Char('B'));
+  QVERIFY(cell.bold);
+
+  // Bold off → verify not bold
+  parser.feed("\x1b[22m");
+  parser.feed("N");
+  cell = buffer.cellAt(0, 1);
+  QCOMPARE(cell.ch, QLatin1Char('N'));
+  QVERIFY(!cell.bold);
+
+  // Italic on
+  parser.feed("\x1b[3m");
+  parser.feed("I");
+  cell = buffer.cellAt(0, 2);
+  QCOMPARE(cell.ch, QLatin1Char('I'));
+  QVERIFY(cell.italic);
+
+  // Italic off
+  parser.feed("\x1b[23m");
+  parser.feed("J");
+  cell = buffer.cellAt(0, 3);
+  QVERIFY(!cell.italic);
+
+  // Underline on
+  parser.feed("\x1b[4m");
+  parser.feed("U");
+  cell = buffer.cellAt(0, 4);
+  QVERIFY(cell.underline);
+
+  // Standard foreground (red, index 1)
+  parser.feed("\x1b[0m");  // reset first
+  parser.feed("\x1b[31m");
+  parser.feed("R");
+  cell = buffer.cellAt(0, 5);
+  QCOMPARE(cell.ch, QLatin1Char('R'));
+  QVERIFY(cell.fg != QColor(220, 220, 220));  // changed from default
+
+  // 24-bit foreground (10, 20, 30)
+  parser.feed("\x1b[38;2;10;20;30m");
+  parser.feed("M");
+  cell = buffer.cellAt(0, 6);
+  QCOMPARE(cell.ch, QLatin1Char('M'));
+  QCOMPARE(cell.fg, QColor(10, 20, 30));
+
+  // 24-bit background (40, 50, 60)
+  parser.feed("\x1b[48;2;40;50;60m");
+  parser.feed("X");
+  cell = buffer.cellAt(0, 7);
+  QCOMPARE(cell.ch, QLatin1Char('X'));
+  QCOMPARE(cell.bg, QColor(40, 50, 60));
+
+  // 256-color foreground (index 160)
+  parser.feed("\x1b[38;5;160m");
+  parser.feed("P");
+  cell = buffer.cellAt(0, 8);
+  QCOMPARE(cell.ch, QLatin1Char('P'));
+  QVERIFY(cell.fg != QColor(10, 20, 30));  // changed from previous
+
+  // Reset → verify all attributes cleared
+  parser.feed("\x1b[0m");
+  parser.feed("Z");
+  cell = buffer.cellAt(0, 9);
+  QCOMPARE(cell.ch, QLatin1Char('Z'));
+  QVERIFY(!cell.bold);
+  QVERIFY(!cell.italic);
+  QVERIFY(!cell.underline);
+  QVERIFY(!cell.strikethrough);
+  QCOMPARE(cell.fg, QColor(220, 220, 220));
+  QCOMPARE(cell.bg, QColor(20, 22, 26));
+}
+
+void TestTerminal::testCsiVpaAndCnlCpl() {
+  TerminalBuffer buffer;
+  buffer.resize(10, 5);
+  VtParser parser(&buffer);
+
+  // CSI d (VPA) — set absolute row
+  parser.feed("\x1b[3d");  // move to row 3 (1-based)
+  parser.feed("V");
+  QCOMPARE(buffer.cellAt(2, 0).ch, QLatin1Char('V'));
+
+  // CSI E (CNL) — cursor next line
+  parser.feed("\x1b[1;1H");  // reset to top-left
+  parser.feed("\x1b[2E");     // down 2 lines + CR
+  parser.feed("E");
+  QCOMPARE(buffer.cellAt(2, 0).ch, QLatin1Char('E'));
+
+  // CSI F (CPL) — cursor previous line
+  parser.feed("\x1b[4;5H");  // row 4, col 5
+  parser.feed("\x1b[1F");     // up 1 line + CR
+  parser.feed("F");
+  QCOMPARE(buffer.cellAt(2, 0).ch, QLatin1Char('F'));
 }
 
 void TestTerminal::testTerminalSessionBasics() {

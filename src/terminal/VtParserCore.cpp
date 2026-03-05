@@ -38,7 +38,17 @@ bool handleOsc(VtParserCore *core, QString *titleOut) {
   bool ok = false;
   const int ps = core->oscString.left(semi).toInt(&ok);
   if (!ok || (ps != 0 && ps != 2)) return false;
-  if (titleOut) *titleOut = core->oscString.mid(semi + 1);
+  if (titleOut) {
+    QString title = core->oscString.mid(semi + 1);
+    // Sanitize: strip control characters and cap length
+    QString clean;
+    clean.reserve(qMin(title.size(), 256));
+    for (QChar ch : title) {
+      if (clean.size() >= 256) break;
+      if (ch.unicode() >= 0x20 && ch.unicode() <= 0xFFFF) clean.append(ch);
+    }
+    *titleOut = clean;
+  }
   return true;
 }
 
@@ -133,6 +143,9 @@ void handleCsiCommand(VtParserCore *core, TerminalBuffer *buffer, char command) 
     case 'B': buffer->cursorDown(param(0, 1));          break;
     case 'C': buffer->cursorForward(param(0, 1));       break;
     case 'D': buffer->cursorBack(param(0, 1));          break;
+    case 'd': buffer->setCursorPosition(param(0, 1) - 1, buffer->cursorColumn()); break;
+    case 'E': buffer->cursorDown(param(0, 1)); buffer->carriageReturn(); break;
+    case 'F': buffer->cursorUp(param(0, 1)); buffer->carriageReturn();  break;
     case 'G': buffer->cursorToColumn(param(0, 1) - 1); break;
     case 'f': // fallthrough — same as H
     case 'H': handleCursorPosition(core, buffer);       break;
@@ -155,6 +168,7 @@ void handleCsiCommand(VtParserCore *core, TerminalBuffer *buffer, char command) 
       const int top = param(0, 1);
       const int bottom = param(1, buffer->rows());
       buffer->setScrollRegion(top - 1, bottom - 1);
+      buffer->setCursorPosition(0, 0);
       break;
     }
     case 'S': {
@@ -264,8 +278,11 @@ bool handleOscByte(VtParserCore *core, unsigned char raw, QString *titleOut) {
   }
   if (raw == 0x1b) {
     core->state = VtParserCore::State::OscEscape;
-  } else {
+  } else if (core->oscString.size() < 8192) {
     core->oscString.append(QChar(raw));
+  } else {
+    // OSC too long — discard and return to normal
+    core->state = VtParserCore::State::Normal;
   }
   return false;
 }

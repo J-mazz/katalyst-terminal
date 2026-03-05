@@ -10,10 +10,10 @@ struct SwapchainSupport {
 
 VkSurfaceFormatKHR chooseSwapSurfaceFormat(const QVector<VkSurfaceFormatKHR>& availableFormats) {
   if (availableFormats.isEmpty()) {
-    return {VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+    return {VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
   }
   for (const auto& availableFormat : availableFormats) {
-    if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
+    if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM &&
         availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
       return availableFormat;
     }
@@ -169,9 +169,11 @@ void VulkanRenderer::cleanupBuffers() {
 }
 
 void VulkanRenderer::cleanupSyncObjects() {
-  if (m_renderFinished) vkDestroySemaphore(m_device, m_renderFinished, nullptr);
-  if (m_imageAvailable) vkDestroySemaphore(m_device, m_imageAvailable, nullptr);
-  if (m_inFlight) vkDestroyFence(m_device, m_inFlight, nullptr);
+  for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    if (m_renderFinished[i]) vkDestroySemaphore(m_device, m_renderFinished[i], nullptr);
+    if (m_imageAvailable[i]) vkDestroySemaphore(m_device, m_imageAvailable[i], nullptr);
+    if (m_inFlight[i]) vkDestroyFence(m_device, m_inFlight[i], nullptr);
+  }
 }
 
 void VulkanRenderer::cleanup() {
@@ -208,11 +210,47 @@ void VulkanRenderer::resize(int width, int height) {
   if (m_surfaceSize.width() == width && m_surfaceSize.height() == height) {
     return;
   }
-  m_surfaceSize = QSize(width, height);
 
   vkDeviceWaitIdle(m_device);
-  cleanupSwapchain();
-  createSwapchain();
+
+  // Free old command buffers before destroying dependent objects.
+  if (!m_commandBuffers.isEmpty() && m_commandPool) {
+    vkFreeCommandBuffers(m_device, m_commandPool,
+                         static_cast<uint32_t>(m_commandBuffers.size()),
+                         m_commandBuffers.data());
+    m_commandBuffers.clear();
+  }
+
+  // Destroy objects that depend on the swapchain, but not the swapchain itself.
+  for (VkFramebuffer fb : m_framebuffers)
+    vkDestroyFramebuffer(m_device, fb, nullptr);
+  m_framebuffers.clear();
+
+  if (m_pipeline) { vkDestroyPipeline(m_device, m_pipeline, nullptr); m_pipeline = VK_NULL_HANDLE; }
+  if (m_pipelineLayout) { vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr); m_pipelineLayout = VK_NULL_HANDLE; }
+  if (m_renderPass) { vkDestroyRenderPass(m_device, m_renderPass, nullptr); m_renderPass = VK_NULL_HANDLE; }
+
+  for (VkImageView v : m_swapchainImageViews)
+    vkDestroyImageView(m_device, v, nullptr);
+  m_swapchainImageViews.clear();
+  m_swapchainImages.clear();
+
+  // Retire the old swapchain by passing it to the new creation call.
+  // This avoids calling vkDestroySwapchainKHR on an active swapchain,
+  // which crashes on some hybrid GPU / NVIDIA-layer configurations.
+  VkSwapchainKHR oldSwapchain = m_swapchain;
+  m_swapchain = VK_NULL_HANDLE;
+
+  if (!createSwapchainWithOld(oldSwapchain)) {
+    // Creation failed — try to destroy old handle and bail out.
+    if (oldSwapchain) vkDestroySwapchainKHR(m_device, oldSwapchain, nullptr);
+    m_ready = false;
+    return;
+  }
+
+  // Old swapchain is now retired; safe to destroy.
+  if (oldSwapchain) vkDestroySwapchainKHR(m_device, oldSwapchain, nullptr);
+
   createRenderPass();
   createPipeline();
   createFramebuffers();
@@ -404,25 +442,31 @@ void VulkanRenderer::render() {
     return;
   }
 
-  reuploadAtlas();
+  vkWaitForFences(m_device, 1, &m_inFlight[m_currentFrame], VK_TRUE, UINT64_MAX);
 
-  vkWaitForFences(m_device, 1, &m_inFlight, VK_TRUE, UINT64_MAX);
-  vkResetFences(m_device, 1, &m_inFlight);
+  // Atlas re-upload is safe only after the fence guarantees the GPU
+  // has finished sampling the atlas from the previous frame.
+  reuploadAtlas();
 
   updateInstanceBuffer();
 
   uint32_t imageIndex = 0;
   VkResult acquireResult =
       vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX,
-                            m_imageAvailable, VK_NULL_HANDLE, &imageIndex);
-  if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR ||
-      acquireResult == VK_SUBOPTIMAL_KHR) {
+                            m_imageAvailable[m_currentFrame], VK_NULL_HANDLE, &imageIndex);
+  if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
     resize(m_window->width(), m_window->height());
     return;
   }
-  if (acquireResult != VK_SUCCESS) {
+  if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
     return;
   }
+
+  // Reset the fence only after a successful acquire, right before submit.
+  // If we reset it earlier and the acquire returns OUT_OF_DATE, we'd return
+  // without submitting work to re-signal the fence, causing the next
+  // vkWaitForFences to block forever.
+  vkResetFences(m_device, 1, &m_inFlight[m_currentFrame]);
 
   recordCommandBuffer(imageIndex);
 
@@ -430,14 +474,14 @@ void VulkanRenderer::render() {
   VkSubmitInfo submitInfo{};
   submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
   submitInfo.waitSemaphoreCount = 1;
-  submitInfo.pWaitSemaphores = &m_imageAvailable;
+  submitInfo.pWaitSemaphores = &m_imageAvailable[m_currentFrame];
   submitInfo.pWaitDstStageMask = &waitStage;
   submitInfo.commandBufferCount = 1;
   submitInfo.pCommandBuffers = &m_commandBuffers[imageIndex];
   submitInfo.signalSemaphoreCount = 1;
-  submitInfo.pSignalSemaphores = &m_renderFinished;
+  submitInfo.pSignalSemaphores = &m_renderFinished[m_currentFrame];
 
-  VkResult submitResult = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlight);
+  VkResult submitResult = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlight[m_currentFrame]);
   if (submitResult != VK_SUCCESS) {
     qWarning("VulkanRenderer: vkQueueSubmit failed (%d)", submitResult);
     return;
@@ -446,7 +490,7 @@ void VulkanRenderer::render() {
   VkPresentInfoKHR presentInfo{};
   presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
   presentInfo.waitSemaphoreCount = 1;
-  presentInfo.pWaitSemaphores = &m_renderFinished;
+  presentInfo.pWaitSemaphores = &m_renderFinished[m_currentFrame];
   presentInfo.swapchainCount = 1;
   presentInfo.pSwapchains = &m_swapchain;
   presentInfo.pImageIndices = &imageIndex;
@@ -456,6 +500,8 @@ void VulkanRenderer::render() {
       presentResult == VK_SUBOPTIMAL_KHR) {
     resize(m_window->width(), m_window->height());
   }
+
+  m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 bool VulkanRenderer::selectPhysicalDevice() {
@@ -585,7 +631,66 @@ bool VulkanRenderer::createSwapchain() {
                           m_swapchainImages.data());
 
   m_swapchainImageViews.resize(swapchainImageCount);
-  return createSwapchainImageViews();
+  if (!createSwapchainImageViews())
+    return false;
+
+  m_surfaceSize = QSize(static_cast<int>(extent.width),
+                        static_cast<int>(extent.height));
+  return true;
+}
+
+bool VulkanRenderer::createSwapchainWithOld(VkSwapchainKHR oldSwapchain) {
+  SwapchainSupport support = querySwapchainSupport(m_physicalDevice, m_surface);
+
+  if (support.formats.isEmpty() || support.presentModes.isEmpty()) {
+    return false;
+  }
+
+  VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(support.formats);
+  VkPresentModeKHR presentMode = chooseSwapPresentMode(support.presentModes);
+  VkExtent2D extent = chooseSwapExtent(support.capabilities, m_window);
+
+  uint32_t imageCount = support.capabilities.minImageCount + 1;
+  if (support.capabilities.maxImageCount > 0 &&
+      imageCount > support.capabilities.maxImageCount) {
+    imageCount = support.capabilities.maxImageCount;
+  }
+
+  VkSwapchainCreateInfoKHR createInfo{};
+  createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+  createInfo.surface = m_surface;
+  createInfo.minImageCount = imageCount;
+  createInfo.imageFormat = surfaceFormat.format;
+  createInfo.imageColorSpace = surfaceFormat.colorSpace;
+  createInfo.imageExtent = extent;
+  createInfo.imageArrayLayers = 1;
+  createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  createInfo.preTransform = support.capabilities.currentTransform;
+  createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+  createInfo.presentMode = presentMode;
+  createInfo.clipped = VK_TRUE;
+  createInfo.oldSwapchain = oldSwapchain;
+
+  if (vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapchain) != VK_SUCCESS)
+    return false;
+
+  m_swapchainFormat = surfaceFormat.format;
+  m_swapchainExtent = extent;
+
+  uint32_t swapchainImageCount = 0;
+  vkGetSwapchainImagesKHR(m_device, m_swapchain, &swapchainImageCount, nullptr);
+  m_swapchainImages.resize(swapchainImageCount);
+  vkGetSwapchainImagesKHR(m_device, m_swapchain, &swapchainImageCount,
+                          m_swapchainImages.data());
+
+  m_swapchainImageViews.resize(swapchainImageCount);
+  if (!createSwapchainImageViews())
+    return false;
+
+  m_surfaceSize = QSize(static_cast<int>(extent.width),
+                        static_cast<int>(extent.height));
+  return true;
 }
 
 void VulkanRenderer::cleanupSwapchain() {
@@ -1062,12 +1167,14 @@ bool VulkanRenderer::createSyncObjects() {
   fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
   fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-  if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailable) !=
-          VK_SUCCESS ||
-      vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinished) !=
-          VK_SUCCESS ||
-      vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlight) != VK_SUCCESS) {
-    return false;
+  for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailable[i]) !=
+            VK_SUCCESS ||
+        vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinished[i]) !=
+            VK_SUCCESS ||
+        vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlight[i]) != VK_SUCCESS) {
+      return false;
+    }
   }
 
   return true;
@@ -1332,6 +1439,10 @@ void VulkanRenderer::reuploadAtlas() {
 }
 
 bool VulkanRenderer::growInstanceBuffer(size_t needed) {
+  // Geometric growth: at least double, with a floor of 15000 instances.
+  size_t newCapacity = qMax(m_instanceCapacity * 2, needed);
+  newCapacity = qMax(newCapacity, static_cast<size_t>(15000));
+
   vkDeviceWaitIdle(m_device);
   vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
   vkFreeMemory(m_device, m_instanceMemory, nullptr);
@@ -1340,7 +1451,7 @@ bool VulkanRenderer::growInstanceBuffer(size_t needed) {
 
   VkBufferCreateInfo bufInfo{};
   bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  bufInfo.size = needed * sizeof(TerminalQuadInstance);
+  bufInfo.size = newCapacity * sizeof(TerminalQuadInstance);
   bufInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
   bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -1367,7 +1478,7 @@ bool VulkanRenderer::growInstanceBuffer(size_t needed) {
   }
 
   vkBindBufferMemory(m_device, m_instanceBuffer, m_instanceMemory, 0);
-  m_instanceCapacity = needed;
+  m_instanceCapacity = newCapacity;
   return true;
 }
 
@@ -1455,6 +1566,12 @@ void VulkanRenderer::transitionImageLayout(VkCommandBuffer commandBuffer,
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
     dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  } else if (oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL &&
+             newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+    barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
   }
 
   vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, 0, nullptr, 0,

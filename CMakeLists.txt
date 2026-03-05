@@ -127,6 +127,10 @@ add_executable(test_terminal tests/test_terminal.cpp)
 target_link_libraries(test_terminal katalyst_lib Qt6::Test)
 add_test(NAME test_terminal COMMAND test_terminal)
 
+add_executable(test_ui tests/test_ui.cpp)
+target_link_libraries(test_ui katalyst_lib Qt6::Test Qt6::Widgets)
+add_test(NAME test_ui COMMAND test_ui)
+
 find_program(GCOVR gcovr)
 
 if(GCOVR)

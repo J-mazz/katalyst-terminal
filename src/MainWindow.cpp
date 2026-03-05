@@ -154,6 +154,14 @@ void MainWindow::connectTabSignals(TerminalTab *tab) {
     int idx = m_tabs->indexOf(tab);
     if (idx >= 0) m_tabs->setTabText(idx, tab->tabTitle());
   });
+  connect(tab, &TerminalTab::sessionClosed, this, [this, tab]() {
+    int idx = m_tabs->indexOf(tab);
+    if (idx < 0) return;
+    if (m_tabs->count() > 1) {
+      m_tabs->removeTab(idx);
+      tab->deleteLater();
+    }
+  });
 }
 
 void MainWindow::newTab() {

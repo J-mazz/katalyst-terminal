@@ -17,32 +17,44 @@ VulkanTerminalView::VulkanTerminalView(TerminalSession *session,
   if (!m_instance.create()) {
     return;
   }
+  m_instanceCreated = true;
 
   m_window = new VulkanTerminalWindow();
   m_window->setVulkanInstance(&m_instance);
-  m_window->create();
-
-  m_renderer = new VulkanRenderer();
-  if (!m_renderer->initialize(&m_instance, m_window, profile, profile.font)) {
-    delete m_renderer;
-    m_renderer = nullptr;
-    delete m_window;
-    m_window = nullptr;
-    return;
-  }
-  m_window->setRenderer(m_renderer);
 
   m_container = QWidget::createWindowContainer(m_window, this);
-  m_container->setFocusPolicy(Qt::NoFocus);
+  m_container->setFocusPolicy(Qt::StrongFocus);
+  setFocusProxy(m_container);
+
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(0);
   layout->addWidget(m_container);
 
-connectVulkanSignals();
+  connect(m_window, &VulkanTerminalWindow::readyForInit,
+          this, &VulkanTerminalView::initRenderer);
+  connectVulkanSignals();
 }
 
 bool VulkanTerminalView::isInitialized() const {
-  return m_renderer && m_renderer->isReady() && m_window && m_container;
+  return m_instanceCreated && m_window && m_container;
+}
+
+void VulkanTerminalView::initRenderer() {
+  if (m_renderer) {
+    return;
+  }
+
+  const auto profile = m_config->defaultProfile();
+  m_renderer = new VulkanRenderer();
+  if (!m_renderer->initialize(&m_instance, m_window, profile, profile.font)) {
+    qWarning("VulkanTerminalView: Vulkan renderer initialization failed");
+    delete m_renderer;
+    m_renderer = nullptr;
+    return;
+  }
+  m_window->setRenderer(m_renderer);
+  updateFrame();
 }
 
 void VulkanTerminalView::connectVulkanSignals() {
@@ -61,36 +73,16 @@ bool VulkanTerminalView::findNext(bool) {
   return false;
 }
 
-void VulkanTerminalView::keyPressEvent(QKeyEvent *event) {
-  if (!m_session) {
-    return;
-  }
-
-  if ((event->modifiers() & Qt::ControlModifier) &&
-      (event->modifiers() & Qt::ShiftModifier)) {
-    if (event->key() == Qt::Key_C) { copySelection(); return; }
-    if (event->key() == Qt::Key_V) { pasteClipboard(); return; }
-  }
-
-  const QString text = event->text();
-  if (!text.isEmpty()) {
-    m_session->sendInput(text.toLocal8Bit());
-  }
-}
-
-void VulkanTerminalView::inputMethodEvent(QInputMethodEvent *event) {
-  if (!m_session) {
-    return;
-  }
-  const QString text = event->commitString();
-  if (!text.isEmpty()) {
-    m_session->sendInput(text.toLocal8Bit());
-  }
-}
-
-void VulkanTerminalView::wheelEvent(QWheelEvent *event) {
-  TerminalViewCommon::wheelEvent(event);
+void VulkanTerminalView::requestRepaint() {
   updateFrame();
+}
+
+void VulkanTerminalView::resizeEvent(QResizeEvent *event) {
+  if (!m_session || !m_session->buffer()) return;
+  if (width() <= 0 || height() <= 0) return;
+  int columns = qMax(1, width() / m_cellWidth);
+  int rows = qMax(1, height() / m_cellHeight);
+  m_session->resize(columns, rows);
 }
 
 void VulkanTerminalView::focusInEvent(QFocusEvent *event) {
@@ -98,25 +90,14 @@ void VulkanTerminalView::focusInEvent(QFocusEvent *event) {
   TerminalViewBase::focusInEvent(event);
 }
 
-void VulkanTerminalView::mousePressEvent(QMouseEvent *event) {
-  if (event->button() == Qt::LeftButton) {
-    m_selecting = true;
-    m_selectStart = cellFromPoint(event->pos());
-    m_selectEnd = m_selectStart;
-    updateFrame();
-  }
-}
-
-void VulkanTerminalView::mouseMoveEvent(QMouseEvent *event) {
-  if (m_selecting) {
-    updateSelection(event->pos());
-  }
-}
-
-void VulkanTerminalView::mouseReleaseEvent(QMouseEvent *event) {
-  if (event->button() == Qt::LeftButton && m_selecting) {
-    updateSelection(event->pos());
-    m_selecting = false;
+void VulkanTerminalView::showEvent(QShowEvent *event) {
+  TerminalViewBase::showEvent(event);
+  if (width() > 0 && height() > 0) {
+    int columns = qMax(1, width() / m_cellWidth);
+    int rows = qMax(1, height() / m_cellHeight);
+    if (m_session && m_session->buffer()) {
+      m_session->resize(columns, rows);
+    }
   }
 }
 
@@ -126,6 +107,16 @@ void VulkanTerminalView::updateFrame() {
   }
   if (!m_session || !m_session->buffer()) {
     return;
+  }
+
+  // First frame: ensure session knows terminal dimensions.
+  // Set flag BEFORE calling resize() to prevent infinite recursion:
+  // resize() emits screenUpdated → updateFrame() re-enters here.
+  if (!m_firstFrameResized && width() > 0 && height() > 0) {
+    m_firstFrameResized = true;
+    int columns = qMax(1, width() / m_cellWidth);
+    int rows = qMax(1, height() / m_cellHeight);
+    m_session->resize(columns, rows);
   }
 
   if (!m_userScroll) {
@@ -143,47 +134,4 @@ void VulkanTerminalView::updateFrame() {
 
   m_renderer->updateFromBuffer(m_session->buffer(), m_scrollOffset, selection);
   m_renderer->render();
-}
-
-VulkanTerminalView::CellPos VulkanTerminalView::cellFromPoint(
-    const QPoint &pos) const {
-  CellPos cell;
-  int column = qMax(0, pos.x() / m_cellWidth);
-  int row    = qMax(0, pos.y() / m_cellHeight);
-
-  if (m_session && m_session->buffer()) {
-    column = qBound(0, column, m_session->buffer()->columns() - 1);
-    row    = qBound(0, row,    m_session->buffer()->rows() - 1);
-  }
-
-  cell.column = column;
-  cell.row    = row;
-  return cell;
-}
-
-void VulkanTerminalView::updateSelection(const QPoint &pos) {
-  m_selectEnd = cellFromPoint(pos);
-  updateFrame();
-}
-
-QString VulkanTerminalView::selectedRow(const QStringList &lines, int row,
-                                         const CellPos &start, const CellPos &end) const {
-  const QString &line = lines[row];
-  const int startCol = (row == start.row) ? start.column : 0;
-  const int endCol   = (row == end.row)   ? end.column   : line.size();
-  return line.mid(startCol, endCol - startCol);
-}
-
-QString VulkanTerminalView::selectedText() const {
-  if (!m_session || !m_session->buffer() || !hasSelection()) return QString();
-
-  const QStringList lines = m_session->buffer()->snapshot(m_scrollOffset);
-  CellPos start = m_selectStart;
-  CellPos end = m_selectEnd;
-  if (isSelectionReversed(start, end)) qSwap(start, end);
-
-  QStringList selected;
-  for (int row = start.row; row <= end.row && row < lines.size(); ++row)
-    selected.push_back(selectedRow(lines, row, start, end));
-  return selected.join(QLatin1Char('\n'));
 }

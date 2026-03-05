@@ -123,6 +123,19 @@ TerminalViewBase *TerminalTab::createView() {
     emit titleChanged();
   });
 
+  connect(session, &TerminalSession::sessionEnded, this,
+          [this, view]() {
+    if (m_views.size() <= 1) {
+      emit sessionClosed();
+      return;
+    }
+    m_views.removeOne(view);
+    QSplitter *parentSplitter = splitterForView(view);
+    view->deleteLater();
+    if (parentSplitter) cleanupSplitter(parentSplitter);
+    if (!m_views.isEmpty()) setActiveView(m_views.first());
+  });
+
   m_views.push_back(view);
   if (!m_activeView) {
     setActiveView(view);

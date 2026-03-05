@@ -18,7 +18,7 @@ layout(push_constant) uniform PushConstants {
 void main() {
   vec2 pixel = inInstancePos + inPos * inInstanceSize;
   vec2 ndc = vec2((pixel.x / pc.screenSize.x) * 2.0 - 1.0,
-                  1.0 - (pixel.y / pc.screenSize.y) * 2.0);
+                  (pixel.y / pc.screenSize.y) * 2.0 - 1.0);
   gl_Position = vec4(ndc, 0.0, 1.0);
 
   fragUV = mix(inInstanceUV.xy, inInstanceUV.zw, inPos);

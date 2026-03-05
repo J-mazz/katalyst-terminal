@@ -88,6 +88,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #if defined(__linux__)
@@ -374,6 +375,7 @@ public:
 signals:
 	void screenUpdated();
 	void titleChanged(const QString &title);
+	void sessionEnded();
 
 private:
 	void handlePtyData(const QByteArray &data);
@@ -438,6 +440,7 @@ protected:
     bool isSelectionReversed(const CellPos &start, const CellPos &end) const;
 
     QByteArray keyToSequence(QKeyEvent *event) const;
+    virtual void requestRepaint();
 
     TerminalSession *m_session;
     TerminalConfig *m_config;
@@ -553,6 +556,7 @@ private:
 	bool createDevice();
 	bool createSwapchainImageViews();
 	bool createSwapchain();
+	bool createSwapchainWithOld(VkSwapchainKHR oldSwapchain);
 	void cleanupSwapchain();
 	void cleanupAtlas();
 	void cleanupBuffers();
@@ -637,9 +641,11 @@ private:
 	VkCommandPool m_commandPool = VK_NULL_HANDLE;
 	QVector<VkCommandBuffer> m_commandBuffers;
 
-	VkSemaphore m_imageAvailable = VK_NULL_HANDLE;
-	VkSemaphore m_renderFinished = VK_NULL_HANDLE;
-	VkFence m_inFlight = VK_NULL_HANDLE;
+	static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+	VkSemaphore m_imageAvailable[MAX_FRAMES_IN_FLIGHT] = {};
+	VkSemaphore m_renderFinished[MAX_FRAMES_IN_FLIGHT] = {};
+	VkFence m_inFlight[MAX_FRAMES_IN_FLIGHT] = {};
+	uint32_t m_currentFrame = 0;
 
 	VkBuffer m_vertexBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory m_vertexMemory = VK_NULL_HANDLE;
@@ -689,6 +695,7 @@ signals:
 	void mouseReleased(QMouseEvent *event);
 	void wheelScrolled(QWheelEvent *event);
 	void windowFocused();
+	void readyForInit();
 
 protected:
 	void exposeEvent(QExposeEvent *event) override;
@@ -713,31 +720,28 @@ public:
 	VulkanTerminalView(TerminalSession *session, TerminalConfig *config,
 										 QWidget *parent = nullptr);
 	bool isInitialized() const;
+	void initRenderer();
 
 	void setSearchTerm(const QString &term) override;
 	bool findNext(bool forward) override;
-	void keyPressEvent(QKeyEvent *event) override;
-	void inputMethodEvent(QInputMethodEvent *event) override;
-	void wheelEvent(QWheelEvent *event) override;
+
+protected:
+	void requestRepaint() override;
 	void focusInEvent(QFocusEvent *event) override;
-	void mousePressEvent(QMouseEvent *event) override;
-	void mouseMoveEvent(QMouseEvent *event) override;
-	void mouseReleaseEvent(QMouseEvent *event) override;
+	void showEvent(QShowEvent *event) override;
+	void resizeEvent(QResizeEvent *event) override;
 
 private:
 	void updateFrame();
 	void connectVulkanSignals();
-	CellPos cellFromPoint(const QPoint &pos) const;
-	void updateSelection(const QPoint &pos);
-	QString selectedRow(const QStringList &lines, int row,
-							 const CellPos &start, const CellPos &end) const;
-	QString selectedText() const;
-
 
 	QVulkanInstance m_instance;
+	bool m_instanceCreated = false;
 	VulkanTerminalWindow *m_window = nullptr;
-	VulkanRenderer *m_renderer = nullptr;
 	QWidget *m_container = nullptr;
+	VulkanRenderer *m_renderer = nullptr;
+	bool m_initialized = false;
+	bool m_firstFrameResized = false;
 };
 
 class TerminalTab : public QWidget {
@@ -756,6 +760,7 @@ public:
 signals:
 	void activeViewChanged(TerminalViewBase *view);
 	void titleChanged();
+	void sessionClosed();
 
 private:
 	TerminalViewBase *createView();

@@ -12,6 +12,8 @@ TerminalSession::TerminalSession(const TerminalConfig::TerminalProfile &profile,
 
   connect(m_pty, &PtyProcess::dataReady, this,
           &TerminalSession::handlePtyData);
+  connect(m_pty, &PtyProcess::exited, this,
+          &TerminalSession::sessionEnded);
   connect(m_parser, &VtParser::titleChanged, this,
           &TerminalSession::titleChanged);
 }

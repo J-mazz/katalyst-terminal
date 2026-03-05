@@ -56,6 +56,10 @@ void TerminalViewCommon::clearSelection() {
   m_selecting = false;
 }
 
+void TerminalViewCommon::requestRepaint() {
+  update();
+}
+
 void TerminalViewCommon::keyPressEvent(QKeyEvent *event) {
   if (!m_session) return;
 
@@ -113,7 +117,7 @@ void TerminalViewCommon::mousePressEvent(QMouseEvent *event) {
     m_selecting = true;
     m_selectStart = cellFromPoint(event->pos());
     m_selectEnd = m_selectStart;
-    update();
+    requestRepaint();
   }
 }
 
@@ -142,9 +146,9 @@ void TerminalViewCommon::wheelEvent(QWheelEvent *event) {
 
   int maxOffset = qMax(0, m_session->buffer()->totalLines() -
                               m_session->buffer()->rows());
-  m_scrollOffset = qBound(0, m_scrollOffset - delta * 3, maxOffset);
+  m_scrollOffset = qBound(0, m_scrollOffset + delta * 3, maxOffset);
   m_userScroll = (m_scrollOffset != 0);
-  update();
+  requestRepaint();
 }
 
 TerminalViewCommon::CellPos TerminalViewCommon::cellFromPoint(const QPoint &pos) const {
@@ -159,7 +163,7 @@ TerminalViewCommon::CellPos TerminalViewCommon::cellFromPoint(const QPoint &pos)
 
 void TerminalViewCommon::updateSelection(const QPoint &pos) {
   m_selectEnd = cellFromPoint(pos);
-  update();
+  requestRepaint();
 }
 
 bool TerminalViewCommon::isSelectionReversed(const CellPos &start, const CellPos &end) const {
