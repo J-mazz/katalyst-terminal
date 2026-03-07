@@ -162,8 +162,10 @@ void VulkanRenderer::cleanupDescriptors() {
 }
 
 void VulkanRenderer::cleanupBuffers() {
-  if (m_instanceBuffer) vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
-  if (m_instanceMemory) vkFreeMemory(m_device, m_instanceMemory, nullptr);
+  for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    if (m_instanceBuffer[i]) vkDestroyBuffer(m_device, m_instanceBuffer[i], nullptr);
+    if (m_instanceMemory[i]) vkFreeMemory(m_device, m_instanceMemory[i], nullptr);
+  }
   if (m_vertexBuffer) vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
   if (m_vertexMemory) vkFreeMemory(m_device, m_vertexMemory, nullptr);
 }
@@ -255,6 +257,8 @@ void VulkanRenderer::resize(int width, int height) {
   createPipeline();
   createFramebuffers();
   createCommandBuffers();
+
+  m_imageInFlight.fill(VK_NULL_HANDLE, m_swapchainImages.size());
 }
 
 void VulkanRenderer::normalizeSelection(Selection &selection) {
@@ -467,6 +471,17 @@ void VulkanRenderer::render() {
   // without submitting work to re-signal the fence, causing the next
   // vkWaitForFences to block forever.
   vkResetFences(m_device, 1, &m_inFlight[m_currentFrame]);
+
+  // Wait if a previous frame-in-flight is still using this swapchain image.
+  // This prevents re-recording m_commandBuffers[imageIndex] while the GPU
+  // is still executing the prior submission that references it.
+  if (imageIndex < static_cast<uint32_t>(m_imageInFlight.size()) &&
+      m_imageInFlight[imageIndex] != VK_NULL_HANDLE) {
+    vkWaitForFences(m_device, 1, &m_imageInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+  }
+  if (imageIndex < static_cast<uint32_t>(m_imageInFlight.size())) {
+    m_imageInFlight[imageIndex] = m_inFlight[m_currentFrame];
+  }
 
   recordCommandBuffer(imageIndex);
 
@@ -721,6 +736,8 @@ void VulkanRenderer::cleanupSwapchain() {
     vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
     m_swapchain = VK_NULL_HANDLE;
   }
+
+  m_imageInFlight.clear();
 }
 
 bool VulkanRenderer::createRenderPass() {
@@ -989,30 +1006,32 @@ bool VulkanRenderer::createVertexBuffer() {
 }
 
 bool VulkanRenderer::createInstanceBuffer() {
-  VkBufferCreateInfo instanceInfo{};
-  instanceInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  instanceInfo.size = sizeof(TerminalQuadInstance) * 15000;
-  instanceInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-  instanceInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  for (int f = 0; f < MAX_FRAMES_IN_FLIGHT; ++f) {
+    VkBufferCreateInfo instanceInfo{};
+    instanceInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    instanceInfo.size = sizeof(TerminalQuadInstance) * 15000;
+    instanceInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    instanceInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  if (vkCreateBuffer(m_device, &instanceInfo, nullptr, &m_instanceBuffer) != VK_SUCCESS)
-    return false;
+    if (vkCreateBuffer(m_device, &instanceInfo, nullptr, &m_instanceBuffer[f]) != VK_SUCCESS)
+      return false;
 
-  VkMemoryRequirements requirements{};
-  vkGetBufferMemoryRequirements(m_device, m_instanceBuffer, &requirements);
-  VkMemoryAllocateInfo allocInfo{};
-  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  allocInfo.allocationSize = requirements.size;
-  allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-  if (allocInfo.memoryTypeIndex == UINT32_MAX)
-    return false;
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(m_device, m_instanceBuffer[f], &requirements);
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = requirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (allocInfo.memoryTypeIndex == UINT32_MAX)
+      return false;
 
-  if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_instanceMemory) != VK_SUCCESS)
-    return false;
+    if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_instanceMemory[f]) != VK_SUCCESS)
+      return false;
 
-  vkBindBufferMemory(m_device, m_instanceBuffer, m_instanceMemory, 0);
-  m_instanceCapacity = instanceInfo.size / sizeof(TerminalQuadInstance);
+    vkBindBufferMemory(m_device, m_instanceBuffer[f], m_instanceMemory[f], 0);
+    m_instanceCapacity[f] = instanceInfo.size / sizeof(TerminalQuadInstance);
+  }
   return true;
 }
 
@@ -1177,6 +1196,8 @@ bool VulkanRenderer::createSyncObjects() {
     }
   }
 
+  m_imageInFlight.fill(VK_NULL_HANDLE, m_swapchainImages.size());
+
   return true;
 }
 
@@ -1206,7 +1227,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
   VkDeviceSize offsets[] = {0, 0};
-  VkBuffer buffers[] = {m_vertexBuffer, m_instanceBuffer};
+  VkBuffer buffers[] = {m_vertexBuffer, m_instanceBuffer[m_currentFrame]};
   vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout,
                           0, 1, &m_descriptorSet, 0, nullptr);
@@ -1439,15 +1460,17 @@ void VulkanRenderer::reuploadAtlas() {
 }
 
 bool VulkanRenderer::growInstanceBuffer(size_t needed) {
+  const int f = m_currentFrame;
   // Geometric growth: at least double, with a floor of 15000 instances.
-  size_t newCapacity = qMax(m_instanceCapacity * 2, needed);
+  size_t newCapacity = qMax(m_instanceCapacity[f] * 2, needed);
   newCapacity = qMax(newCapacity, static_cast<size_t>(15000));
 
-  vkDeviceWaitIdle(m_device);
-  vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
-  vkFreeMemory(m_device, m_instanceMemory, nullptr);
-  m_instanceBuffer = VK_NULL_HANDLE;
-  m_instanceMemory = VK_NULL_HANDLE;
+  // The fence for this frame slot was already waited on at the top of render(),
+  // so the GPU is no longer reading this frame's buffer.
+  vkDestroyBuffer(m_device, m_instanceBuffer[f], nullptr);
+  vkFreeMemory(m_device, m_instanceMemory[f], nullptr);
+  m_instanceBuffer[f] = VK_NULL_HANDLE;
+  m_instanceMemory[f] = VK_NULL_HANDLE;
 
   VkBufferCreateInfo bufInfo{};
   bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -1455,51 +1478,48 @@ bool VulkanRenderer::growInstanceBuffer(size_t needed) {
   bufInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
   bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  if (vkCreateBuffer(m_device, &bufInfo, nullptr, &m_instanceBuffer) != VK_SUCCESS)
+  if (vkCreateBuffer(m_device, &bufInfo, nullptr, &m_instanceBuffer[f]) != VK_SUCCESS)
     return false;
 
   VkMemoryRequirements requirements{};
-  vkGetBufferMemoryRequirements(m_device, m_instanceBuffer, &requirements);
+  vkGetBufferMemoryRequirements(m_device, m_instanceBuffer[f], &requirements);
   VkMemoryAllocateInfo allocInfo{};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = requirements.size;
   allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
   if (allocInfo.memoryTypeIndex == UINT32_MAX) {
-    vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
-    m_instanceBuffer = VK_NULL_HANDLE;
+    vkDestroyBuffer(m_device, m_instanceBuffer[f], nullptr);
+    m_instanceBuffer[f] = VK_NULL_HANDLE;
     return false;
   }
 
-  if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_instanceMemory) != VK_SUCCESS) {
-    vkDestroyBuffer(m_device, m_instanceBuffer, nullptr);
-    m_instanceBuffer = VK_NULL_HANDLE;
+  if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_instanceMemory[f]) != VK_SUCCESS) {
+    vkDestroyBuffer(m_device, m_instanceBuffer[f], nullptr);
+    m_instanceBuffer[f] = VK_NULL_HANDLE;
     return false;
   }
 
-  vkBindBufferMemory(m_device, m_instanceBuffer, m_instanceMemory, 0);
-  m_instanceCapacity = newCapacity;
+  vkBindBufferMemory(m_device, m_instanceBuffer[f], m_instanceMemory[f], 0);
+  m_instanceCapacity[f] = newCapacity;
   return true;
 }
 
 void VulkanRenderer::updateInstanceBuffer() {
-  if (m_instanceBuffer == VK_NULL_HANDLE || m_instances.isEmpty()) return;
-  if (m_dirtyLast < m_dirtyFirst) return;  // nothing changed this frame
+  const int f = m_currentFrame;
+  if (m_instanceBuffer[f] == VK_NULL_HANDLE || m_instances.isEmpty()) return;
 
   const size_t needed = static_cast<size_t>(m_instances.size());
-  const bool grew = (needed > m_instanceCapacity);
+  const bool grew = (needed > m_instanceCapacity[f]);
   if (grew && !growInstanceBuffer(needed)) return;
 
-  // After a buffer reallocation every instance must be re-uploaded.
-  const int uploadFirst = grew ? 0 : m_dirtyFirst;
-  const int uploadLast  = grew ? (int)m_instances.size() - 1 : m_dirtyLast;
-
+  // Per-frame buffers: always upload the full instance set so this frame's
+  // buffer is self-consistent regardless of what the other frame contains.
   void *data = nullptr;
-  const size_t offsetBytes = static_cast<size_t>(uploadFirst) * sizeof(TerminalQuadInstance);
-  const size_t uploadSize  = static_cast<size_t>(uploadLast - uploadFirst + 1) * sizeof(TerminalQuadInstance);
-  vkMapMemory(m_device, m_instanceMemory, offsetBytes, uploadSize, 0, &data);
-  memcpy(data, &m_instances[uploadFirst], uploadSize);
-  vkUnmapMemory(m_device, m_instanceMemory);
+  const size_t uploadSize = needed * sizeof(TerminalQuadInstance);
+  vkMapMemory(m_device, m_instanceMemory[f], 0, uploadSize, 0, &data);
+  memcpy(data, m_instances.data(), uploadSize);
+  vkUnmapMemory(m_device, m_instanceMemory[f]);
 }
 
 VkCommandBuffer VulkanRenderer::beginSingleTimeCommands() {

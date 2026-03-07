@@ -36,6 +36,15 @@ VulkanTerminalView::VulkanTerminalView(TerminalSession *session,
   connectVulkanSignals();
 }
 
+VulkanTerminalView::~VulkanTerminalView() {
+  // Destroy the renderer before ~QWidget deletes children (m_container →
+  // m_window) and before ~QVulkanInstance tears down the Vulkan instance.
+  // VulkanRenderer::cleanup() calls vkDeviceWaitIdle and releases all GPU
+  // resources, so Qt can safely destroy the surface afterwards.
+  delete m_renderer;
+  m_renderer = nullptr;
+}
+
 bool VulkanTerminalView::isInitialized() const {
   return m_instanceCreated && m_window && m_container;
 }

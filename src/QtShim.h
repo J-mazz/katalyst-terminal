@@ -645,13 +645,14 @@ private:
 	VkSemaphore m_imageAvailable[MAX_FRAMES_IN_FLIGHT] = {};
 	VkSemaphore m_renderFinished[MAX_FRAMES_IN_FLIGHT] = {};
 	VkFence m_inFlight[MAX_FRAMES_IN_FLIGHT] = {};
+	QVector<VkFence> m_imageInFlight;
 	uint32_t m_currentFrame = 0;
 
 	VkBuffer m_vertexBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory m_vertexMemory = VK_NULL_HANDLE;
-	VkBuffer m_instanceBuffer = VK_NULL_HANDLE;
-	VkDeviceMemory m_instanceMemory = VK_NULL_HANDLE;
-	size_t m_instanceCapacity = 0;
+	VkBuffer m_instanceBuffer[MAX_FRAMES_IN_FLIGHT] = {};
+	VkDeviceMemory m_instanceMemory[MAX_FRAMES_IN_FLIGHT] = {};
+	size_t m_instanceCapacity[MAX_FRAMES_IN_FLIGHT] = {};
 
 	VkImage m_atlasImage = VK_NULL_HANDLE;
 	VkDeviceMemory m_atlasMemory = VK_NULL_HANDLE;
@@ -719,6 +720,7 @@ class VulkanTerminalView : public TerminalViewCommon {
 public:
 	VulkanTerminalView(TerminalSession *session, TerminalConfig *config,
 										 QWidget *parent = nullptr);
+	~VulkanTerminalView() override;
 	bool isInitialized() const;
 	void initRenderer();
 
