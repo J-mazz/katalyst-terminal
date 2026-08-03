@@ -74,10 +74,7 @@ jobs:
             pkg-config \
             qt6-qtbase-devel \
             qt6-qtbase-private-devel \
-            vulkan-headers \
-            vulkan-loader-devel \
             kf6-kconfig-devel \
-            glslang \
             cppcheck \
             git \
             ca-certificates \

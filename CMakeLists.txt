@@ -54,7 +54,6 @@ endif()
 file(CREATE_LINK "${GCM_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/gcm.cache" SYMBOLIC)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Gui DBus Test)
-find_package(Vulkan REQUIRED)
 find_package(KF6Config REQUIRED)
 
 # C++23 module interface files must be compiled before any TU that imports them.
@@ -64,7 +63,7 @@ add_library(katalyst_modules OBJECT
   src/modules/SgrParamCore.cpp
 )
 target_include_directories(katalyst_modules PUBLIC src)
-target_link_libraries(katalyst_modules Qt6::Widgets Qt6::Gui Vulkan::Vulkan)
+target_link_libraries(katalyst_modules Qt6::Widgets Qt6::Gui)
 
 set(SOURCES
   src/QtShim.h
@@ -79,9 +78,6 @@ set(SOURCES
   src/ui/TerminalView.cpp
   src/ui/TerminalViewCommon.cpp
   src/ui/TerminalTab.cpp
-  src/ui/VulkanTerminalView.cpp
-  src/vulkan/VulkanRenderer.cpp
-  src/vulkan/VulkanTerminalWindow.cpp
 )
 
 add_library(katalyst_lib STATIC ${SOURCES} $<TARGET_OBJECTS:katalyst_modules>)
@@ -89,39 +85,17 @@ add_dependencies(katalyst_lib katalyst_modules)
 
 target_include_directories(katalyst_lib PUBLIC src)
 
-target_link_libraries(katalyst_lib Qt6::Widgets Qt6::Gui Qt6::DBus Vulkan::Vulkan KF6::ConfigCore)
+target_link_libraries(katalyst_lib
+  Qt6::Widgets
+  Qt6::Gui
+  Qt6::DBus
+  KF6::ConfigCore
+  KF6::ConfigGui
+)
 
 add_executable(katalyst-terminal src/main.cpp)
 
 target_link_libraries(katalyst-terminal katalyst_lib)
-
-set(SHADER_SOURCES
-  ${CMAKE_CURRENT_SOURCE_DIR}/shaders/terminal_quad.vert
-  ${CMAKE_CURRENT_SOURCE_DIR}/shaders/terminal_quad.frag
-)
-
-set(SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
-find_program(GLSLANG_VALIDATOR glslangValidator)
-
-if (GLSLANG_VALIDATOR)
-  foreach(SHADER_FILE IN LISTS SHADER_SOURCES)
-    get_filename_component(SHADER_NAME ${SHADER_FILE} NAME)
-    set(SHADER_SPV ${SHADER_OUTPUT_DIR}/${SHADER_NAME}.spv)
-    add_custom_command(
-      OUTPUT ${SHADER_SPV}
-      COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUTPUT_DIR}
-      COMMAND ${GLSLANG_VALIDATOR} -V ${SHADER_FILE} -o ${SHADER_SPV}
-      DEPENDS ${SHADER_FILE}
-      COMMENT "Compiling ${SHADER_NAME}"
-    )
-    list(APPEND SHADER_OUTPUTS ${SHADER_SPV})
-  endforeach()
-
-  add_custom_target(katalyst-terminal-shaders ALL DEPENDS ${SHADER_OUTPUTS})
-  add_dependencies(katalyst-terminal katalyst-terminal-shaders)
-else()
-  message(WARNING "glslangValidator not found; Vulkan shaders will not be built.")
-endif()
 
 add_executable(test_terminal tests/test_terminal.cpp)
 target_link_libraries(test_terminal katalyst_lib Qt6::Test)
@@ -153,6 +127,3 @@ target_include_directories(katalyst-terminal PRIVATE src)
 
 install(TARGETS katalyst-terminal RUNTIME DESTINATION bin)
 install(FILES data/org.katalyst.Terminal.desktop DESTINATION share/applications)
-if (SHADER_OUTPUTS)
-  install(FILES ${SHADER_OUTPUTS} DESTINATION share/katalyst-terminal/shaders)
-endif()

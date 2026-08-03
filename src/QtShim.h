@@ -1,4 +1,4 @@
-// QtShim.h — Qt/KDE/Vulkan/POSIX compatibility shim for C++23 modules.
+// QtShim.h — Qt/KDE/POSIX compatibility shim for C++23 modules.
 //
 // Include this header FIRST in every .cpp file, BEFORE `import std;`.
 // Qt headers transitively pull in STL headers; by including them before
@@ -8,9 +8,6 @@
 // --- C++ standard library (included before import std; to avoid redefinition) ---
 #include <deque>
 #include <memory>
-
-// --- Vulkan (must precede Qt Vulkan wrappers) ---
-#include <vulkan/vulkan.h>
 
 // --- Qt Core ---
 #include <QByteArray>
@@ -29,6 +26,7 @@
 #include <QObject>
 #include <QPoint>
 #include <QPointer>
+#include <QProcess>
 #include <QProcessEnvironment>
 #include <QSocketNotifier>
 #include <QString>
@@ -41,8 +39,10 @@
 
 // --- Qt GUI ---
 #include <QClipboard>
+#include <QContextMenuEvent>
 #include <QFocusEvent>
 #include <QFontMetrics>
+#include <QIcon>
 #include <QImage>
 #include <QInputMethodEvent>
 #include <QExposeEvent>
@@ -53,27 +53,40 @@
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QSize>
-#include <QVulkanInstance>
 #include <QWheelEvent>
 #include <QWindow>
 
 // --- Qt Widgets ---
 #include <QAction>
 #include <QApplication>
-#include <QHBoxLayout>
+#include <QCheckBox>
+#include <QColorDialog>
+#include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFrame>
 #include <QFormLayout>
+#include <QFontDialog>
+#include <QHBoxLayout>
+#include <QInputDialog>
 #include <QKeySequence>
 #include <QKeySequenceEdit>
+#include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QSplitter>
+#include <QStatusBar>
+#include <QStyle>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -107,8 +120,6 @@ class TerminalViewBase;
 class TerminalViewCommon;
 class TerminalView;
 class TerminalTab;
-class VulkanRenderer;
-class VulkanTerminalWindow;
 struct VtParserCore;
 
 class TerminalDBus : public QObject {
@@ -300,7 +311,11 @@ public:
 	TerminalConfig();
 
 	TerminalProfile defaultProfile() const;
-	QString renderer() const;
+	TerminalProfile profile(const QString &name) const;
+	QList<TerminalProfile> profiles() const;
+	QString defaultProfileName() const;
+	void saveProfiles(const QList<TerminalProfile> &profiles,
+							 const QString &defaultProfileName);
 
 	QFont font() const;
 	QColor backgroundColor() const;
@@ -308,8 +323,9 @@ public:
 	int scrollbackLines() const;
 
 private:
+	QList<TerminalProfile> m_profiles;
+	QString m_defaultProfileName;
 	TerminalProfile m_defaultProfile;
-	QString m_renderer;
 };
 
 class PtyProcess : public QObject {
@@ -371,6 +387,7 @@ public:
 	void resize(int columns, int rows);
 
 	TerminalBuffer *buffer() const;
+	const TerminalConfig::TerminalProfile &profile() const;
 
 signals:
 	void screenUpdated();
@@ -489,268 +506,14 @@ private:
 	static bool isCellVisuallyEmpty(const TerminalBuffer::Cell &cell);
 };
 
-struct TerminalQuadVertex {
-	float x;
-	float y;
-};
-
-struct TerminalQuadInstance {
-	float posX;
-	float posY;
-	float sizeX;
-	float sizeY;
-	float uvMinX;
-	float uvMinY;
-	float uvMaxX;
-	float uvMaxY;
-	float fgR;
-	float fgG;
-	float fgB;
-	float fgA;
-	float bgR;
-	float bgG;
-	float bgB;
-	float bgA;
-};
-
-constexpr TerminalQuadVertex kTerminalQuadVertices[] = {
-		TerminalQuadVertex{0.0f, 0.0f},
-		TerminalQuadVertex{1.0f, 0.0f},
-		TerminalQuadVertex{0.0f, 1.0f},
-		TerminalQuadVertex{1.0f, 1.0f}};
-
-class VulkanRenderer {
-public:
-	VulkanRenderer();
-	~VulkanRenderer();
-
-	struct Selection {
-		bool active = false;
-		int startRow = 0;
-		int startCol = 0;
-		int endRow = 0;
-		int endCol = 0;
-	};
-
-	bool initialize(QVulkanInstance *instance, QWindow *window,
-									const TerminalConfig::TerminalProfile &profile,
-									const QFont &font);
-	void cleanup();
-
-	void resize(int width, int height);
-	void updateFromBuffer(const TerminalBuffer *buffer, int scrollOffset,
-												const Selection &selection);
-	void render();
-
-	bool isReady() const;
-
-private:
-	struct GlyphInfo {
-		float uvMinX = 0.0f;
-		float uvMinY = 0.0f;
-		float uvMaxX = 0.0f;
-		float uvMaxY = 0.0f;
-	};
-
-	bool selectPhysicalDevice();
-	bool createDevice();
-	bool createSwapchainImageViews();
-	bool createSwapchain();
-	bool createSwapchainWithOld(VkSwapchainKHR oldSwapchain);
-	void cleanupSwapchain();
-	void cleanupAtlas();
-	void cleanupBuffers();
-	void cleanupDescriptors();
-	void cleanupSyncObjects();
-	bool createRenderPass();
-	bool createDescriptorSetLayout();
-	bool createPipelineLayout();
-	bool createPipeline();
-	bool createFramebuffers();
-	bool createCommandPool();
-	bool createCommandBuffers();
-	bool createVertexBuffer();
-	bool createInstanceBuffer();
-	bool createBuffers();
-	bool createAtlasImage(uint32_t width, uint32_t height);
-	bool createAtlasView();
-	bool createAtlasSampler();
-	bool createAtlas();
-	bool createDescriptorSet();
-	bool createSyncObjects();
-
-	void recordCommandBuffer(uint32_t imageIndex);
-	void buildGlyphAtlas(const QFont &font);
-	void insertGlyphAt(QPainter &painter, uint codepoint, int &x, int &y,
-	                   int atlasWidth, int atlasHeight, const QFontMetrics &metrics);
-	void preRasterizeGlyphRanges(QPainter &painter, int &x, int &y, int atlasWidth, int atlasHeight);
-	void rasterizeBoldGlyph(QPainter &painter, uint cp,
-	                        const QFontMetrics &metrics, int atlasWidth, int atlasHeight);
-	void preRasterizeBoldGlyphs(QPainter &painter, const QFont &boldFont, int atlasWidth, int atlasHeight);
-	void updateInstanceBuffer();
-	bool growInstanceBuffer(size_t needed);
-	bool rasterizeGlyph(uint codepoint, bool bold = false);
-	struct BufferCopyRegion {
-		uint32_t width;
-		uint32_t height;
-		uint32_t rowLength;
-	};
-	bool allocateStagingBuffer(VkDeviceSize imageSize, VkBuffer &stagingBuffer, VkDeviceMemory &stagingMemory);
-	void uploadStagingToAtlas(VkBuffer stagingBuffer, const BufferCopyRegion &region);
-	void reuploadAtlas();
-	VkCommandBuffer beginSingleTimeCommands();
-	void endSingleTimeCommands(VkCommandBuffer commandBuffer);
-	void transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image,
-														 VkImageLayout oldLayout,
-														 VkImageLayout newLayout);
-	void copyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer,
-												 VkImage image, const BufferCopyRegion& copyRegion);
-
-	// Helper functions for updateFromBuffer to reduce complexity
-	void normalizeSelection(Selection &selection);
-	uint getGlyphKey(uint codepoint, bool bold);
-	bool isCellSelected(int row, int col, const Selection &sel) const;
-	void addDecorationInstances(const TerminalBuffer::Cell &cell,
-															const TerminalQuadInstance &baseInstance,
-															const QColor &fg);
-
-	uint32_t findMemoryType(uint32_t typeFilter,
-													VkMemoryPropertyFlags properties) const;
-	VkShaderModule createShaderModule(const QByteArray &code);
-
-	QVulkanInstance *m_instance = nullptr;
-	QWindow *m_window = nullptr;
-
-	VkSurfaceKHR m_surface = VK_NULL_HANDLE;
-	VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
-	VkDevice m_device = VK_NULL_HANDLE;
-	VkQueue m_graphicsQueue = VK_NULL_HANDLE;
-	uint32_t m_graphicsQueueFamily = 0;
-
-	VkSwapchainKHR m_swapchain = VK_NULL_HANDLE;
-	VkFormat m_swapchainFormat = VK_FORMAT_B8G8R8A8_SRGB;
-	VkExtent2D m_swapchainExtent{};
-	QVector<VkImage> m_swapchainImages;
-	QVector<VkImageView> m_swapchainImageViews;
-
-	VkRenderPass m_renderPass = VK_NULL_HANDLE;
-	VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-	VkPipeline m_pipeline = VK_NULL_HANDLE;
-	QVector<VkFramebuffer> m_framebuffers;
-
-	VkCommandPool m_commandPool = VK_NULL_HANDLE;
-	QVector<VkCommandBuffer> m_commandBuffers;
-
-	static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
-	VkSemaphore m_imageAvailable[MAX_FRAMES_IN_FLIGHT] = {};
-	VkSemaphore m_renderFinished[MAX_FRAMES_IN_FLIGHT] = {};
-	VkFence m_inFlight[MAX_FRAMES_IN_FLIGHT] = {};
-	QVector<VkFence> m_imageInFlight;
-	uint32_t m_currentFrame = 0;
-
-	VkBuffer m_vertexBuffer = VK_NULL_HANDLE;
-	VkDeviceMemory m_vertexMemory = VK_NULL_HANDLE;
-	VkBuffer m_instanceBuffer[MAX_FRAMES_IN_FLIGHT] = {};
-	VkDeviceMemory m_instanceMemory[MAX_FRAMES_IN_FLIGHT] = {};
-	size_t m_instanceCapacity[MAX_FRAMES_IN_FLIGHT] = {};
-
-	VkImage m_atlasImage = VK_NULL_HANDLE;
-	VkDeviceMemory m_atlasMemory = VK_NULL_HANDLE;
-	VkImageView m_atlasView = VK_NULL_HANDLE;
-	VkSampler m_atlasSampler = VK_NULL_HANDLE;
-
-	VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
-	VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-	VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
-
-	TerminalConfig::TerminalProfile m_profile;
-	QSize m_cellSize;
-	QSize m_surfaceSize;
-	QFont m_atlasFont;
-	QHash<uint, GlyphInfo> m_glyphs;
-	QVector<TerminalQuadInstance> m_instances;
-	QVector<TerminalQuadInstance> m_cachedInstances;
-	int m_dirtyFirst = 0;
-	int m_dirtyLast = -1;
-	QImage m_atlasImageCpu;
-	int m_atlasCursorX = 0;
-	int m_atlasCursorY = 0;
-	bool m_atlasDirty = false;
-
-	bool m_ready = false;
-};
-
-class VulkanTerminalWindow : public QWindow {
-	Q_OBJECT
-
-public:
-	VulkanTerminalWindow();
-
-	void setVulkanInstance(QVulkanInstance *instance);
-	void setRenderer(VulkanRenderer *renderer);
-
-signals:
-	void keyInput(QKeyEvent *event);
-	void mousePressed(QMouseEvent *event);
-	void mouseMoved(QMouseEvent *event);
-	void mouseReleased(QMouseEvent *event);
-	void wheelScrolled(QWheelEvent *event);
-	void windowFocused();
-	void readyForInit();
-
-protected:
-	void exposeEvent(QExposeEvent *event) override;
-	void resizeEvent(QResizeEvent *event) override;
-	void keyPressEvent(QKeyEvent *event) override;
-	void mousePressEvent(QMouseEvent *event) override;
-	void mouseMoveEvent(QMouseEvent *event) override;
-	void mouseReleaseEvent(QMouseEvent *event) override;
-	void wheelEvent(QWheelEvent *event) override;
-	void focusInEvent(QFocusEvent *event) override;
-
-private:
-	QVulkanInstance *m_instance = nullptr;
-	VulkanRenderer *m_renderer = nullptr;
-	bool m_exposed = false;
-};
-
-class VulkanTerminalView : public TerminalViewCommon {
-	Q_OBJECT
-
-public:
-	VulkanTerminalView(TerminalSession *session, TerminalConfig *config,
-										 QWidget *parent = nullptr);
-	~VulkanTerminalView() override;
-	bool isInitialized() const;
-	void initRenderer();
-
-	void setSearchTerm(const QString &term) override;
-	bool findNext(bool forward) override;
-
-protected:
-	void requestRepaint() override;
-	void focusInEvent(QFocusEvent *event) override;
-	void showEvent(QShowEvent *event) override;
-	void resizeEvent(QResizeEvent *event) override;
-
-private:
-	void updateFrame();
-	void connectVulkanSignals();
-
-	QVulkanInstance m_instance;
-	bool m_instanceCreated = false;
-	VulkanTerminalWindow *m_window = nullptr;
-	QWidget *m_container = nullptr;
-	VulkanRenderer *m_renderer = nullptr;
-	bool m_initialized = false;
-	bool m_firstFrameResized = false;
-};
-
 class TerminalTab : public QWidget {
 	Q_OBJECT
 
 public:
 	explicit TerminalTab(TerminalConfig *config, QWidget *parent = nullptr);
+	TerminalTab(TerminalConfig *config,
+					const TerminalConfig::TerminalProfile &profile,
+					QWidget *parent = nullptr);
 
 	TerminalViewBase *activeView() const;
 	void split(Qt::Orientation orientation);
@@ -758,6 +521,10 @@ public:
 	void setSearchTerm(const QString &term);
 	bool findNext(bool forward);
 	QString tabTitle() const;
+	QString profileName() const;
+	QString customTitle() const;
+	void setCustomTitle(const QString &title);
+	int viewCount() const;
 
 signals:
 	void activeViewChanged(TerminalViewBase *view);
@@ -774,10 +541,12 @@ private:
 	TerminalViewBase *findFirstView(QWidget *root) const;
 
 	TerminalConfig *m_config = nullptr;
+	TerminalConfig::TerminalProfile m_profile;
 	QWidget *m_root = nullptr;
 	QList<TerminalViewBase *> m_views;
 	TerminalViewBase *m_activeView = nullptr;
 	QString m_title;
+	QString m_customTitle;
 };
 
 class MainWindow : public QMainWindow {
@@ -792,8 +561,16 @@ private:
 	void setupUi();
 	void setupActions();
 	void configureShortcuts();
+	void configureProfiles();
 	void loadSavedShortcuts();
 	void connectTabSignals(TerminalTab *tab);
+	void refreshProfileMenus();
+	void newTabWithProfile(const QString &profileName);
+	void closeTabAt(int index);
+	void duplicateTabAt(int index);
+	void renameTabAt(int index);
+	void showTabContextMenu(const QPoint &position);
+	void updateStatus();
 	TerminalTab *currentTab() const;
 	TerminalViewBase *activeView() const;
 
@@ -803,17 +580,38 @@ private slots:
 	void splitHorizontal();
 	void splitVertical();
 	void closeSplit();
+	void duplicateTab();
+	void renameTab();
+	void nextTab();
+	void previousTab();
+	void showSearch();
+	void hideSearch();
+	void findNextMatch();
+	void findPreviousMatch();
 	void updateTabTitle(int index);
 
 private:
 	std::unique_ptr<TerminalConfig> m_config;
 	QTabWidget *m_tabs = nullptr;
-	QPushButton *m_newTabButton = nullptr;
+	QToolButton *m_newTabButton = nullptr;
+	QMenu *m_profilesMenu = nullptr;
+	QMenu *m_newTabMenu = nullptr;
+	QFrame *m_searchBar = nullptr;
+	QLineEdit *m_searchEdit = nullptr;
+	QLabel *m_searchStatus = nullptr;
+	QLabel *m_profileStatus = nullptr;
 	QAction *m_newTabAction = nullptr;
 	QAction *m_closeTabAction = nullptr;
+	QAction *m_duplicateTabAction = nullptr;
+	QAction *m_renameTabAction = nullptr;
+	QAction *m_nextTabAction = nullptr;
+	QAction *m_previousTabAction = nullptr;
 	QAction *m_splitHorizontalAction = nullptr;
 	QAction *m_splitVerticalAction = nullptr;
 	QAction *m_closeSplitAction = nullptr;
 	QAction *m_copyAction = nullptr;
 	QAction *m_pasteAction = nullptr;
+	QAction *m_findAction = nullptr;
+	QAction *m_findNextAction = nullptr;
+	QAction *m_findPreviousAction = nullptr;
 };

@@ -1,6 +1,6 @@
 # Contributing to Katalyst Terminal
 
-Thank you for your interest in contributing! Katalyst Terminal is a KDE Plasma terminal emulator written in **C++23**, using Qt 6, KDE Frameworks 6 (KConfig), a custom PTY layer, a VT/ANSI parser, a software raster renderer, and an optional **Vulkan** renderer backed by a glyph atlas. Contributions of all kinds are welcome — bug fixes, new features, test coverage, and documentation improvements.
+Thank you for your interest in contributing! Katalyst Terminal is a KDE Plasma terminal emulator written in **C++23**, using Qt 6, KDE Frameworks 6 (KConfig), a custom PTY layer, a VT/ANSI parser, and a QPainter renderer. Contributions of all kinds are welcome: bug fixes, new features, test coverage, and documentation improvements.
 
 Please read this document before opening a pull request.
 
@@ -24,7 +24,6 @@ Please read this document before opening a pull request.
   - [Qt Conventions](#qt-conventions)
   - [Naming](#naming)
   - [Error Handling](#error-handling)
-  - [Shaders](#shaders)
 - [Project Structure](#project-structure)
 - [Subsystem Notes](#subsystem-notes)
   - [PTY (PtyProcess)](#pty-ptyprocess)
@@ -32,7 +31,6 @@ Please read this document before opening a pull request.
   - [VT/ANSI Parser (VtParserCore / VtParser)](#vtansi-parser-vtparsercore--vtparser)
   - [C++23 Modules (AnsiColorCore, SgrParamCore)](#c23-modules-ansicolorcore-sgrparamcore)
   - [Raster Renderer (TerminalView)](#raster-renderer-terminalview)
-  - [Vulkan Renderer (VulkanRenderer)](#vulkan-renderer-vulkanrenderer)
   - [Configuration (TerminalConfig)](#configuration-terminalconfig)
   - [D-Bus (TerminalDBus)](#d-bus-terminaldbus)
   - [Qt Shim (QtShim.h)](#qt-shim-qtshimh)
@@ -55,8 +53,6 @@ Be respectful, constructive, and assume good faith. This is a small project — 
 |---|---|
 | Qt 6 (Widgets, Gui, DBus, Test) | Required |
 | KDE Frameworks 6 — KConfig | Required |
-| Vulkan headers + loader | Required (Vulkan renderer is optional at runtime, not at build time) |
-| `glslangValidator` | Required for compiling GLSL shaders to SPIR-V |
 | CMake 3.24+ | Required |
 | GCC 13+ (C++23, `-fmodules`) | Required — `import std;` and C++23 named modules are used. Clang support is untested. |
 | `gcovr` | Optional — only needed for the `coverage` CMake target |
@@ -115,18 +111,14 @@ cmake --build build --target coverage
 main()
  └── MainWindow                  ← QMainWindow, tab bar, keyboard shortcuts, KConfig
       └── TerminalTab             ← QWidget, manages split panes (QSplitter tree)
-           └── TerminalView       ← QPainter-based raster renderer  ┐ both inherit
-                VulkanTerminalView ← Vulkan glyph-atlas renderer     ┘ TerminalViewCommon
-                     │
-                     ├── TerminalSession   ← owns PtyProcess + TerminalBuffer + VtParser
-                     │        ├── PtyProcess      ← forkpty / POSIX PTY, QSocketNotifier
-                     │        ├── TerminalBuffer  ← screen + scrollback, cell grid
-                     │        └── VtParser        ← thin Qt wrapper around VtParserCore
-                     │                 └── VtParserCore  ← state machine: Normal/Escape/CSI/OSC
-                     │                        imports terminal.ansi.color (AnsiColorCore)
-                     │                        imports terminal.sgr.param  (SgrParamCore)
-                     └── VulkanRenderer    ← Vulkan device, swapchain, glyph atlas, instanced draw
-                          VulkanTerminalWindow ← QWindow (VulkanSurface), forwards input signals
+     └── TerminalView       ← QPainter renderer, inherits TerminalViewCommon
+       └── TerminalSession   ← owns PtyProcess + TerminalBuffer + VtParser
+          ├── PtyProcess      ← forkpty / POSIX PTY, QSocketNotifier
+          ├── TerminalBuffer  ← screen + scrollback, cell grid
+          └── VtParser        ← thin Qt wrapper around VtParserCore
+                └── VtParserCore  ← state machine: Normal/Escape/CSI/OSC
+                 imports terminal.ansi.color (AnsiColorCore)
+                 imports terminal.sgr.param  (SgrParamCore)
 ```
 
 All class declarations live in **`src/QtShim.h`** (see [Qt Shim](#qt-shim-qtshimh)).  
@@ -142,8 +134,6 @@ C++23 named module interfaces (`export module …`) are in `src/modules/` and co
 
 - A clear description of the problem and steps to reproduce it
 - Your OS/distro, KDE Plasma version, Qt 6 version, and GCC version
-- Whether you are using `Renderer=Vulkan` or `Renderer=Raster` (check `~/.config/katalyst-terminalrc`, `[General]` group)
-- Whether the bug reproduces in both renderers or only one
 - Any relevant terminal output or crash backtrace
 
 ### Suggesting Features
@@ -151,7 +141,7 @@ C++23 named module interfaces (`export module …`) are in `src/modules/` and co
 [Open an issue](https://github.com/J-mazz/katalyst-terminal/issues/new) with:
 
 - A description of the feature and the problem it solves
-- Which subsystem it touches (PTY, buffer, parser, raster renderer, Vulkan renderer, tabs/splits, D-Bus, config, etc.)
+- Which subsystem it touches (PTY, buffer, parser, renderer, tabs/splits, D-Bus, config, etc.)
 - Any prior art from other terminal emulators that's worth referencing
 
 ### Submitting Pull Requests
@@ -163,9 +153,8 @@ C++23 named module interfaces (`export module …`) are in `src/modules/` and co
 2. Keep each PR to **one logical change**. Split unrelated fixes into separate PRs.
 3. Make sure the project builds cleanly: no new compiler warnings.
 4. Make sure `ctest` passes. If your change touches `TerminalBuffer`, `VtParserCore`, `PtyProcess`, or `TerminalSession`, add or update a test in `tests/test_terminal.cpp`.
-5. If your change touches GLSL shaders, verify they compile with `glslangValidator` before committing the `.spv` output.
-6. Write a clear PR description: what changed, why, and — for non-trivial changes — how you tested it.
-7. Reference related issues in the description (`Closes #N`, `Fixes #N`).
+5. Write a clear PR description: what changed, why, and how you tested non-trivial changes.
+6. Reference related issues in the description (`Closes #N`, `Fixes #N`).
 
 ---
 
@@ -205,16 +194,7 @@ C++23 named module interfaces (`export module …`) are in `src/modules/` and co
 ### Error Handling
 
 - In `PtyProcess`: check return values from `forkpty`, `ioctl`, `write`, `read`; handle `EINTR` in write loops; treat `EIO` on read as child exit.
-- In `VulkanRenderer`: every Vulkan API call that can fail must check its return value and call `cleanup()` / return `false` on failure. Do not panic or `abort()` — the renderer must degrade gracefully so `TerminalTab::createView()` can fall back to the raster renderer.
 - Do not use exceptions. The codebase does not enable them and Qt does not use them.
-
-### Shaders
-
-- GLSL source lives in `shaders/`. The vertex shader is `terminal_quad.vert`, the fragment shader is `terminal_quad.frag`.
-- The fragment shader samples the glyph atlas (a greyscale `R` channel texture) and blends foreground/background per-instance.
-- The vertex shader uses a `PushConstants` block for the screen size; instanced per-cell data is passed via vertex attributes (`inInstancePos`, `inInstanceSize`, `inInstanceUV`, `inFg`, `inBg`).
-- Compile with `glslangValidator -V <file> -o <file>.spv` and verify there are no warnings before committing.
-- SPV binaries are **not** committed to the repository; they are built by CMake at build time.
 
 ---
 
@@ -234,7 +214,7 @@ katalyst-terminal/
 │   ├── terminal/
 │   │   ├── PtyProcess.cpp           # forkpty, QSocketNotifier, SIGWINCH via TIOCSWINSZ
 │   │   ├── TerminalBuffer.cpp       # Cell grid, scrollback, alternate screen, cursor, find
-│   │   ├── TerminalConfig.cpp       # KConfig reader: profiles, renderer selection, colors/font
+│   │   ├── TerminalConfig.cpp       # KConfig reader: profiles, colors/font
 │   │   ├── TerminalSession.cpp      # Owns PtyProcess + TerminalBuffer + VtParser; emits screenUpdated
 │   │   ├── VtParser.cpp             # Qt QObject wrapper around VtParserCore
 │   │   └── VtParserCore.cpp         # VT/ANSI state machine: Normal/Escape/CSI/OSC/OscEscape
@@ -242,14 +222,7 @@ katalyst-terminal/
 │   │   ├── TerminalViewBase         # Abstract base (in QtShim.h): setSearchTerm, findNext, copy/paste
 │   │   ├── TerminalViewCommon.cpp   # Shared input (keyboard, mouse, wheel, IME), selection logic
 │   │   ├── TerminalView.cpp         # QPainter raster renderer: backgrounds, text, cursor, highlights
-│   │   ├── TerminalTab.cpp          # QSplitter tree management, view lifecycle, tab title
-│   │   └── VulkanTerminalView.cpp   # Vulkan view: delegates input to Common, drives VulkanRenderer
-│   └── vulkan/
-│       ├── VulkanRenderer.cpp       # Vulkan device/swapchain/pipeline, glyph atlas, instanced draw
-│       └── VulkanTerminalWindow.cpp # QWindow (VulkanSurface), forwards Qt events as signals
-├── shaders/
-│   ├── terminal_quad.vert           # Instanced quad vertex shader (NDC transform, UV mapping)
-│   └── terminal_quad.frag           # Alpha-blend glyph atlas R channel over per-cell bg/fg
+│   │   └── TerminalTab.cpp          # QSplitter tree management, view lifecycle, tab title
 ├── tests/
 │   └── test_terminal.cpp            # Qt Test: buffer, parser, config, session, PTY lifecycle
 ├── data/
@@ -277,8 +250,8 @@ katalyst-terminal/
 
 - Stores cells as `QVector<Cell>` rows. The scrollback and both screens (normal + alternate) are held in a single flat `QVector` of rows, with `m_normalScreenStart`, `m_alternateScreenStart`, and `m_useAlternateScreen` tracking which region is active.
 - Minimum size is 1×1 (enforced in `resize()`).
-- `cellAtVisible(row, col, scrollOffset)` is the primary accessor for renderers — it maps the visible viewport (accounting for scroll offset) into the flat buffer.
-- `snapshot(scrollOffset)` returns the visible rows as `QStringList` — used for selection text extraction in both renderers.
+- `cellAtVisible(row, col, scrollOffset)` is the primary renderer accessor. It maps the visible viewport, including scroll offset, into the flat buffer.
+- `snapshot(scrollOffset)` returns the visible rows as `QStringList` for selection text extraction.
 - `findNext` dispatches to `findForward` / `findBackward` based on the `forward` flag.
 
 ### VT/ANSI Parser (`VtParserCore` / `VtParser`)
@@ -306,18 +279,9 @@ katalyst-terminal/
 - Cell font is set lazily in `setCellFont` per cell (bold/italic). Consider batching by font run if you are optimizing paint performance.
 - `scrollToLine` adjusts `m_scrollOffset` to center the target line in the viewport.
 
-### Vulkan Renderer (`VulkanRenderer`)
-
-- Initializes a `QVulkanInstance` (API 1.2), creates a `VulkanTerminalWindow` (a `QWindow` with `VulkanSurface`), and wraps it in `QWidget::createWindowContainer`.
-- The glyph atlas is a device-local `VK_FORMAT_R8_UNORM` image. Glyphs are rasterized using `QPainter` into a CPU-side `QImage`, then uploaded via a staging buffer with `copyBufferToImage`.
-- Rendering is fully instanced: each terminal cell becomes one `TerminalQuadInstance` (position, size, UV rect into atlas, fg/fg RGBA). The instance buffer grows on demand (`growInstanceBuffer`).
-- Screen size is pushed via a `PushConstants` block (`vec2 screenSize`) in the vertex shader.
-- `isInitialized()` must return `true` before `TerminalTab` uses the Vulkan view; if Vulkan setup fails at any point, `TerminalTab::createView()` deletes the `VulkanTerminalView` and falls back to `TerminalView`.
-- Search and find-next are **not yet implemented** in the Vulkan renderer (`setSearchTerm` and `findNext` are stubs). Contributions welcome.
-
 ### Configuration (`TerminalConfig`)
 
-- Reads from `katalyst-terminalrc` via `KConfig`. The `[General]` group holds `DefaultProfile` and `Renderer`. The `[Profile <name>]` group holds font, colors, scrollback, program, arguments, env, and `TERM`.
+- Reads from `katalyst-terminalrc` via `KConfig`. The `[General]` group holds `DefaultProfile`. The `[Profile <name>]` group holds font, colors, scrollback, program, arguments, env, and `TERM`.
 - Keyboard shortcuts are persisted separately under `[Shortcuts]` in the same file, written by `MainWindow::configureShortcuts()`.
 - `TerminalConfig` is constructed once in `MainWindow::setupUi()` and passed by pointer to all child widgets.
 
@@ -342,7 +306,7 @@ Tests live in `tests/test_terminal.cpp` and use `QTest` + `QSignalSpy`. There is
 Current coverage includes:
 - `TerminalBuffer`: resize, cursor clamping, put/newline/CR/BS/tab, scrollback, find forward/backward, attributes, clear modes, snapshot, visible cells, alternate screen
 - `VtParser` / `VtParserCore`: basic feed, CSI cursor movement, SGR attributes, color params (256-color, true-color), OSC title (BEL and ST terminator), charset designation consumption, private modes (`?25`, `?47`, `?1049`), scroll region
-- `TerminalConfig`: default profile accessors, renderer string, colors
+- `TerminalConfig`: default profile accessors and colors
 - `TerminalSession`: buffer ownership, resize propagation, shell start + PTY read, OSC title via real shell subprocess
 - `PtyProcess`: start, double-start guard, data received, exit signal, `setWindowSize`, `send` after exit
 

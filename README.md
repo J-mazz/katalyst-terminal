@@ -1,16 +1,17 @@
 # Katalyst Terminal
 
-A KDE Plasma terminal emulator written in C++23, with its own PTY, VT/ANSI parser, scrollback buffer, tab and split-pane support, and an optional Vulkan renderer backed by a glyph atlas.
+A KDE Plasma terminal emulator written in C++23, with its own PTY, VT/ANSI parser, scrollback buffer, tab and split-pane support, and a QPainter-based renderer.
 
 ## Features
 
 - **Own PTY** — uses `forkpty(3)` with async reads via `QSocketNotifier`
 - **VT/ANSI parser** — state machine handling CSI, OSC, SGR (256-colour, true-colour), alternate screen, scroll regions, bracketed paste, and more
 - **Scrollback buffer** — configurable line limit, mouse-wheel scrolling
-- **Tabs** — multiple terminal tabs in a single window
+- **Tabs** — movable tabs with profile launch menus, rename, duplicate, next/previous navigation, and right-click management
 - **Split panes** — horizontal and vertical splits, arbitrarily nested
-- **Two renderers** — a QPainter raster renderer (default) and an optional Vulkan renderer with an instanced glyph atlas
-- **Find** — incremental forward/backward search with highlight (raster renderer)
+- **Profiles** — multiple named shell and appearance profiles, built-in presets, a visual profile editor, and per-tab profile selection
+- **Rendering**: QPainter-based terminal cells, colors, text attributes, selection, cursor, and search highlights
+- **Find**: integrated incremental forward/backward search bar with match feedback and highlights
 - **Configurable** — font, colours, scrollback limit, shell, environment, and keyboard shortcuts persisted via KConfig
 - **D-Bus** — open a new window or tab from the command line or scripts
 - **RPM packaging** — spec file and build script included
@@ -23,8 +24,6 @@ Package names vary by distro:
 |---|---|
 | Qt 6 (Widgets, Gui, DBus) | Required |
 | KDE Frameworks 6 — KConfig | Required |
-| Vulkan headers + loader | Required at build time; renderer is optional at runtime |
-| `glslangValidator` | Required for SPIR-V shader compilation |
 | CMake 3.24+ | Required |
 | GCC 14+ | Required — `import std;` and C++23 named modules are used |
 
@@ -54,18 +53,14 @@ cmake --build build
 
 Settings are read from `~/.config/katalyst-terminalrc` (KConfig format).
 
-### Renderer
+### Profiles
+
+Profiles can be added, duplicated, edited, removed, and selected as the default from **Settings → Manage Profiles…**. New tabs can use any profile from the **Profiles** menu or the arrow beside **New Tab**. Existing sessions are left unchanged when a profile is edited.
 
 ```ini
 [General]
-Renderer=Raster   # or: Vulkan
-```
+DefaultProfile=Default
 
-If `Renderer=Vulkan` is set but Vulkan initialisation fails at runtime, the raster renderer is used automatically.
-
-### Profile
-
-```ini
 [Profile Default]
 Font=                        # falls back to system fixed-width font
 Background=14,16,20
@@ -90,6 +85,10 @@ Default bindings:
 |---|---|
 | New Tab | `Ctrl+Shift+T` |
 | Close Tab | `Ctrl+Shift+W` |
+| Duplicate Tab | `Ctrl+Shift+D` |
+| Rename Tab | `F2` |
+| Next Tab | `Ctrl+Tab` |
+| Previous Tab | `Ctrl+Shift+Tab` |
 | Split Horizontally | `Ctrl+Shift+H` |
 | Split Vertically | `Ctrl+Alt+V` |
 | Close Split | `Ctrl+Shift+Q` |
@@ -116,9 +115,8 @@ qdbus org.katalyst.Terminal /org.katalyst.Terminal OpenTab
 
 ```
 MainWindow
- └── TerminalTab              (split-pane manager — QSplitter tree)
-      ├── TerminalView         (QPainter raster renderer)
-      └── VulkanTerminalView   (Vulkan glyph-atlas renderer)
+ └── TerminalTab              (split-pane manager, QSplitter tree)
+      └── TerminalView         (QPainter renderer)
            └── TerminalSession
                 ├── PtyProcess       (forkpty + QSocketNotifier)
                 ├── TerminalBuffer   (cell grid, scrollback, alternate screen)

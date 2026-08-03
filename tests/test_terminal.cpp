@@ -69,8 +69,10 @@ void TestTerminal::testTerminalConfigAccessors() {
 
   QVERIFY(!profile.name.isEmpty());
   QVERIFY(profile.scrollbackLines > 0);
+  QVERIFY(!config.defaultProfileName().isEmpty());
+  QVERIFY(!config.profiles().isEmpty());
+  QCOMPARE(config.profile(config.defaultProfileName()).name, profile.name);
 
-  QVERIFY(!config.renderer().isEmpty());
   QVERIFY(config.scrollbackLines() > 0);
   QVERIFY(config.backgroundColor().isValid());
   QVERIFY(config.foregroundColor().isValid());
@@ -576,6 +578,7 @@ void TestTerminal::testTerminalSessionBasics() {
   TerminalSession session(config.defaultProfile());
 
   QVERIFY(session.buffer() != nullptr);
+  QCOMPARE(session.profile().name, config.defaultProfile().name);
   session.resize(40, 10);
   QCOMPARE(session.buffer()->columns(), 40);
   QCOMPARE(session.buffer()->rows(), 10);

@@ -49,6 +49,10 @@ TerminalBuffer *TerminalSession::buffer() const {
   return m_buffer.get();
 }
 
+const TerminalConfig::TerminalProfile &TerminalSession::profile() const {
+  return m_profile;
+}
+
 void TerminalSession::handlePtyData(const QByteArray &data) {
   m_parser->feed(data);
   emit screenUpdated();

@@ -2,7 +2,12 @@
 import std;
 
 TerminalTab::TerminalTab(TerminalConfig *config, QWidget *parent)
-    : QWidget(parent), m_config(config) {
+  : TerminalTab(config, config->defaultProfile(), parent) {}
+
+TerminalTab::TerminalTab(TerminalConfig *config,
+             const TerminalConfig::TerminalProfile &profile,
+             QWidget *parent)
+  : QWidget(parent), m_config(config), m_profile(profile) {
   auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
 
@@ -90,25 +95,32 @@ bool TerminalTab::findNext(bool forward) {
 }
 
 QString TerminalTab::tabTitle() const {
-  return m_title.isEmpty() ? QStringLiteral("Shell") : m_title;
+  if (!m_customTitle.isEmpty()) {
+    return m_customTitle;
+  }
+  return m_title.isEmpty() ? m_profile.name : m_title;
+}
+
+QString TerminalTab::profileName() const {
+  return m_profile.name;
+}
+
+QString TerminalTab::customTitle() const {
+  return m_customTitle;
+}
+
+void TerminalTab::setCustomTitle(const QString &title) {
+  m_customTitle = title.trimmed();
+  emit titleChanged();
+}
+
+int TerminalTab::viewCount() const {
+  return m_views.size();
 }
 
 TerminalViewBase *TerminalTab::createView() {
-  const auto profile = m_config->defaultProfile();
-  auto *session = new TerminalSession(profile, this);
-  TerminalViewBase *view = nullptr;
-  if (m_config->renderer() == QStringLiteral("Vulkan")) {
-    auto *vkView = new VulkanTerminalView(session, m_config, this);
-    if (vkView->isInitialized()) {
-      view = vkView;
-    } else {
-      qWarning("TerminalTab: Vulkan unavailable, falling back to raster view");
-      delete vkView;
-      view = new TerminalView(session, m_config, this);
-    }
-  } else {
-    view = new TerminalView(session, m_config, this);
-  }
+  auto *session = new TerminalSession(m_profile, this);
+  auto *view = new TerminalView(session, m_config, this);
   session->setParent(view);
   session->startShell();
 

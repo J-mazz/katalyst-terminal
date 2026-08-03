@@ -5,7 +5,6 @@
 #include <QTimer>
 #include <QMenuBar>
 #include <QDialog>
-#include <QExposeEvent>
 #include <QFocusEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -31,14 +30,13 @@ private:
 
 private slots:
   void testMainWindowTabLifecycle();
+  void testEnhancedTabAndProfileUi();
+  void testProfilesDialogAcceptPath();
   void testSplitOperationsAndActions();
   void testTerminalViewInteractionPaths();
   void testShortcutsDialogAcceptPath();
   void testTerminalViewRichPaintAndSearch();
   void testTerminalTabSplitterBranches();
-  void testVulkanTerminalWindowSignalPaths();
-  void testVulkanTerminalViewGuardPaths();
-  void testVulkanRendererGuardAndBufferUpdatePaths();
 };
 
 class EventHarnessView : public TerminalView {
@@ -84,79 +82,6 @@ public:
   }
 };
 
-class VulkanWindowHarness : public VulkanTerminalWindow {
-public:
-  void triggerExpose() {
-    QExposeEvent ev(QRegion(QRect(0, 0, 20, 20)));
-    exposeEvent(&ev);
-  }
-
-  void triggerResize() {
-    QResizeEvent ev(QSize(640, 360), QSize(320, 180));
-    resizeEvent(&ev);
-  }
-
-  void triggerKey(int key, Qt::KeyboardModifiers mods = Qt::NoModifier,
-                  const QString &text = QString()) {
-    QKeyEvent ev(QEvent::KeyPress, key, mods, text);
-    keyPressEvent(&ev);
-  }
-
-  void triggerMousePress(const QPoint &p) {
-    QMouseEvent ev(QEvent::MouseButtonPress, p, p, p, Qt::LeftButton,
-                   Qt::LeftButton, Qt::NoModifier);
-    mousePressEvent(&ev);
-  }
-
-  void triggerMouseMove(const QPoint &p) {
-    QMouseEvent ev(QEvent::MouseMove, p, p, p, Qt::NoButton, Qt::LeftButton,
-                   Qt::NoModifier);
-    mouseMoveEvent(&ev);
-  }
-
-  void triggerMouseRelease(const QPoint &p) {
-    QMouseEvent ev(QEvent::MouseButtonRelease, p, p, p, Qt::LeftButton,
-                   Qt::NoButton, Qt::NoModifier);
-    mouseReleaseEvent(&ev);
-  }
-
-  void triggerWheel(int deltaY) {
-    QWheelEvent ev(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, deltaY),
-                   Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
-    wheelEvent(&ev);
-  }
-
-  void triggerFocusIn() {
-    QFocusEvent ev(QEvent::FocusIn);
-    focusInEvent(&ev);
-  }
-};
-
-class VulkanViewHarness : public VulkanTerminalView {
-public:
-  VulkanViewHarness(TerminalSession *session, TerminalConfig *config)
-      : VulkanTerminalView(session, config, nullptr) {}
-
-  void triggerFocusIn() {
-    QFocusEvent ev(QEvent::FocusIn);
-    focusInEvent(&ev);
-  }
-
-  void triggerShow() {
-    QShowEvent ev;
-    showEvent(&ev);
-  }
-
-  void triggerResize() {
-    QResizeEvent ev(QSize(640, 360), QSize(320, 180));
-    resizeEvent(&ev);
-  }
-
-  void triggerRequestRepaint() {
-    requestRepaint();
-  }
-};
-
 void TestUi::testMainWindowTabLifecycle() {
   MainWindow window;
   window.show();
@@ -178,6 +103,93 @@ void TestUi::testMainWindowTabLifecycle() {
   QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Qt::DirectConnection));
   QCoreApplication::processEvents();
   QVERIFY(tabs->count() >= 1);
+}
+
+void TestUi::testEnhancedTabAndProfileUi() {
+  MainWindow window;
+  window.show();
+  QCoreApplication::processEvents();
+
+  auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("terminalTabs"));
+  auto *newTabButton =
+    window.findChild<QToolButton *>(QStringLiteral("newTabButton"));
+  QVERIFY(tabs != nullptr);
+  QVERIFY(newTabButton != nullptr);
+  QVERIFY(newTabButton->menu() != nullptr);
+
+  TerminalConfig config;
+  QCOMPARE(newTabButton->menu()->actions().size(), config.profiles().size());
+
+  QAction *profileLaunch = newTabButton->menu()->actions().constLast();
+  const QString launchedProfile = profileLaunch->data().toString();
+  const int beforeProfileLaunch = tabs->count();
+  profileLaunch->trigger();
+  QCoreApplication::processEvents();
+  QCOMPARE(tabs->count(), beforeProfileLaunch + 1);
+  auto *launchedTab = qobject_cast<TerminalTab *>(tabs->currentWidget());
+  QVERIFY(launchedTab != nullptr);
+  QCOMPARE(launchedTab->profileName(), launchedProfile);
+
+  QAction *duplicate = findActionByText(window, QStringLiteral("Duplicate Tab"));
+  QAction *previous = findActionByText(window, QStringLiteral("Previous Tab"));
+  QAction *find = findActionByText(window, QStringLiteral("Find"));
+  QVERIFY(duplicate != nullptr);
+  QVERIFY(previous != nullptr);
+  QVERIFY(find != nullptr);
+
+  const int initial = tabs->count();
+  duplicate->trigger();
+  QCoreApplication::processEvents();
+  QCOMPARE(tabs->count(), initial + 1);
+
+  const int current = tabs->currentIndex();
+  previous->trigger();
+  QCOMPARE(tabs->currentIndex(),
+       (current - 1 + tabs->count()) % tabs->count());
+
+  find->trigger();
+  auto *searchBar =
+    window.findChild<QFrame *>(QStringLiteral("terminalSearchBar"));
+  auto *searchEdit =
+    window.findChild<QLineEdit *>(QStringLiteral("terminalSearchEdit"));
+  QVERIFY(searchBar != nullptr);
+  QVERIFY(searchBar->isVisible());
+  QVERIFY(searchEdit != nullptr);
+
+  auto *tab = qobject_cast<TerminalTab *>(tabs->currentWidget());
+  QVERIFY(tab != nullptr);
+  QVERIFY(!tab->profileName().isEmpty());
+  tab->setCustomTitle(QStringLiteral("Work"));
+  QCOMPARE(tab->tabTitle(), QStringLiteral("Work"));
+  QCOMPARE(tab->viewCount(), 1);
+  tab->split(Qt::Horizontal);
+  QCOMPARE(tab->viewCount(), 2);
+  tab->closeActiveSplit();
+  QCOMPARE(tab->viewCount(), 1);
+}
+
+void TestUi::testProfilesDialogAcceptPath() {
+  MainWindow window;
+  window.show();
+  QCoreApplication::processEvents();
+
+  QAction *manage = findActionByText(window, QStringLiteral("Manage Profiles..."));
+  QVERIFY(manage != nullptr);
+
+  QTimer::singleShot(0, []() {
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+      if (auto *dialog = qobject_cast<QDialog *>(widget)) {
+        dialog->accept();
+        break;
+      }
+    }
+  });
+  manage->trigger();
+  QCoreApplication::processEvents();
+
+  TerminalConfig reloaded;
+  QVERIFY(!reloaded.profiles().isEmpty());
+  QVERIFY(!reloaded.defaultProfileName().isEmpty());
 }
 
 void TestUi::testSplitOperationsAndActions() {
@@ -370,112 +382,6 @@ void TestUi::testTerminalTabSplitterBranches() {
   tab.closeActiveSplit();
   tab.closeActiveSplit();
   QVERIFY(tab.activeView() != nullptr);
-}
-
-void TestUi::testVulkanTerminalWindowSignalPaths() {
-  VulkanWindowHarness window;
-
-  QSignalSpy keySpy(&window, &VulkanTerminalWindow::keyInput);
-  QSignalSpy pressSpy(&window, &VulkanTerminalWindow::mousePressed);
-  QSignalSpy moveSpy(&window, &VulkanTerminalWindow::mouseMoved);
-  QSignalSpy releaseSpy(&window, &VulkanTerminalWindow::mouseReleased);
-  QSignalSpy wheelSpy(&window, &VulkanTerminalWindow::wheelScrolled);
-  QSignalSpy focusSpy(&window, &VulkanTerminalWindow::windowFocused);
-
-  window.triggerExpose();
-  window.triggerResize();
-  window.triggerKey(Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
-  window.triggerMousePress(QPoint(4, 4));
-  window.triggerMouseMove(QPoint(10, 10));
-  window.triggerMouseRelease(QPoint(10, 10));
-  window.triggerWheel(120);
-  window.triggerFocusIn();
-
-  QCOMPARE(keySpy.count(), 1);
-  QCOMPARE(pressSpy.count(), 1);
-  QCOMPARE(moveSpy.count(), 1);
-  QCOMPARE(releaseSpy.count(), 1);
-  QCOMPARE(wheelSpy.count(), 1);
-  QCOMPARE(focusSpy.count(), 1);
-}
-
-void TestUi::testVulkanTerminalViewGuardPaths() {
-  TerminalConfig config;
-  TerminalSession session(config.defaultProfile());
-  session.resize(24, 6);
-
-  VulkanViewHarness view(&session, &config);
-  view.resize(640, 220);
-  view.show();
-  QCoreApplication::processEvents();
-
-  QSignalSpy focusedSpy(&view, &TerminalViewBase::focused);
-
-  view.setSearchTerm(QStringLiteral("needle"));
-  QVERIFY(!view.findNext(true));
-  view.triggerRequestRepaint();
-  view.triggerResize();
-  view.triggerShow();
-  view.triggerFocusIn();
-  view.initRenderer();
-  view.initRenderer();
-
-  QVERIFY(view.isInitialized() || !view.isInitialized());
-  QVERIFY(focusedSpy.count() >= 1);
-}
-
-void TestUi::testVulkanRendererGuardAndBufferUpdatePaths() {
-  VulkanRenderer renderer;
-  QVERIFY(!renderer.isReady());
-
-  TerminalConfig config;
-  const auto profile = config.defaultProfile();
-  QVERIFY(!renderer.initialize(nullptr, nullptr, profile, profile.font));
-
-  TerminalBuffer buffer;
-  buffer.resize(5, 3);
-  buffer.clear();
-  buffer.setUnderline(true);
-  buffer.putChar(QLatin1Char('a'));
-  buffer.setUnderline(false);
-  buffer.setStrikethrough(true);
-  buffer.putChar(QLatin1Char('b'));
-  buffer.setStrikethrough(false);
-  buffer.newline();
-  buffer.putChar(QLatin1Char('c'));
-
-  VulkanRenderer::Selection selection;
-  selection.active = true;
-  selection.startRow = 1;
-  selection.startCol = 3;
-  selection.endRow = 0;
-  selection.endCol = 0;
-
-  renderer.updateFromBuffer(nullptr, 0, selection);
-  renderer.updateFromBuffer(&buffer, 0, selection);
-  renderer.updateFromBuffer(&buffer, 0, selection);
-
-  renderer.resize(0, 0);
-  renderer.resize(80, 25);
-  renderer.render();
-  renderer.cleanup();
-  QVERIFY(!renderer.isReady());
-
-  QVulkanInstance instance;
-  instance.setApiVersion(QVersionNumber(1, 2, 0));
-  if (instance.create()) {
-    QWindow window;
-    window.setSurfaceType(QSurface::VulkanSurface);
-    window.setVulkanInstance(&instance);
-    window.resize(320, 200);
-    window.create();
-
-    (void)renderer.initialize(&instance, &window, profile, profile.font);
-    renderer.resize(320, 200);
-    renderer.render();
-    renderer.cleanup();
-    QVERIFY(!renderer.isReady());
-  }
 }
 
 int main(int argc, char **argv) {

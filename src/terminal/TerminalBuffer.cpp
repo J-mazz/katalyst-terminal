@@ -81,9 +81,7 @@ void TerminalBuffer::insertChars(int n) {
   if (m_cursorRow < 0 || m_cursorRow >= m_rows) return;
   auto &line = screenRow(m_cursorRow);
   n = qMin(n, m_columns - m_cursorColumn);
-  for (int i = 0; i < n; ++i) {
-    line.insert(m_cursorColumn, Cell{QLatin1Char(' '), m_currentFg, m_currentBg});
-  }
+  line.insert(m_cursorColumn, n, Cell{QLatin1Char(' '), m_currentFg, m_currentBg});
   line.resize(m_columns);
 }
 
@@ -109,8 +107,11 @@ void TerminalBuffer::eraseChars(int n) {
 void TerminalBuffer::insertLines(int n) {
   if (m_cursorRow < m_scrollTop || m_cursorRow > m_scrollBottom) return;
   n = qMin(n, m_scrollBottom - m_cursorRow + 1);
-  for (int i = 0; i < n; ++i) {
-    scrollRegionDown(m_cursorRow, m_scrollBottom);
+  for (int row = m_scrollBottom; row >= m_cursorRow + n; --row) {
+    screenRow(row) = std::move(screenRow(row - n));
+  }
+  for (int row = m_cursorRow; row < m_cursorRow + n; ++row) {
+    screenRow(row) = blankRow(m_currentFg, m_currentBg);
   }
   m_cursorColumn = 0;
   m_pendingWrap = false;
@@ -119,8 +120,11 @@ void TerminalBuffer::insertLines(int n) {
 void TerminalBuffer::deleteLines(int n) {
   if (m_cursorRow < m_scrollTop || m_cursorRow > m_scrollBottom) return;
   n = qMin(n, m_scrollBottom - m_cursorRow + 1);
-  for (int i = 0; i < n; ++i) {
-    scrollRegionUp(m_cursorRow, m_scrollBottom);
+  for (int row = m_cursorRow; row <= m_scrollBottom - n; ++row) {
+    screenRow(row) = std::move(screenRow(row + n));
+  }
+  for (int row = m_scrollBottom - n + 1; row <= m_scrollBottom; ++row) {
+    screenRow(row) = blankRow(m_currentFg, m_currentBg);
   }
   m_cursorColumn = 0;
   m_pendingWrap = false;
@@ -588,7 +592,7 @@ void TerminalBuffer::scrollRegionUp(int top, int bottom) {
   }
 
   for (int row = top; row < bottom; ++row) {
-    screenRow(row) = screenRow(row + 1);
+    screenRow(row) = std::move(screenRow(row + 1));
   }
   screenRow(bottom) = blankRow(m_currentFg, m_currentBg);
 }
@@ -597,8 +601,13 @@ void TerminalBuffer::scrollRegionDown(int top, int bottom) {
   if (top < 0 || bottom >= m_rows || top >= bottom) {
     return;
   }
+  if (top == 0 && bottom == m_rows - 1) {
+    activeScreenStart() = (activeScreenStart() - 1 + m_rows) % m_rows;
+    screenRow(0) = blankRow(m_currentFg, m_currentBg);
+    return;
+  }
   for (int row = bottom; row > top; --row) {
-    screenRow(row) = screenRow(row - 1);
+    screenRow(row) = std::move(screenRow(row - 1));
   }
   screenRow(top) = blankRow(m_currentFg, m_currentBg);
 }

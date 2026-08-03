@@ -1,13 +1,15 @@
 #include "QtShim.h"
 import std;
 
+extern char **environ;
+
 namespace {
 struct PreparedExec {
   QByteArray program;
   QVector<QByteArray> argStorage;
   std::vector<char *> argv;
-  QVector<QByteArray> envKeys;
-  QVector<QByteArray> envVals;
+  QVector<QByteArray> envStorage;
+  std::vector<char *> envp;
 };
 
 PreparedExec prepareExec(const QString &program, const QStringList &args,
@@ -20,13 +22,30 @@ PreparedExec prepareExec(const QString &program, const QStringList &args,
   pe.argv.reserve(static_cast<size_t>(pe.argStorage.size()) + 1);
   for (QByteArray &b : pe.argStorage) pe.argv.push_back(b.data());
   pe.argv.push_back(nullptr);
-  for (const QString &entry : env) {
-    const int eq = entry.indexOf(QLatin1Char('='));
-    if (eq > 0) {
-      pe.envKeys.push_back(entry.left(eq).toLocal8Bit());
-      pe.envVals.push_back(entry.mid(eq + 1).toLocal8Bit());
-    }
+
+  // Build complete envp: inherit current environ, overlay profile entries.
+  // All allocation happens here — before fork — so the child process
+  // never calls malloc (async-signal-safe compliance).
+  QHash<QByteArray, QByteArray> envMap;
+  for (char **e = environ; e && *e; ++e) {
+    QByteArray entry(*e);
+    int eq = entry.indexOf('=');
+    if (eq > 0)
+      envMap.insert(entry.left(eq), entry.mid(eq + 1));
   }
+  for (const QString &entry : env) {
+    int eq = entry.indexOf(QLatin1Char('='));
+    if (eq > 0)
+      envMap.insert(entry.left(eq).toLocal8Bit(), entry.mid(eq + 1).toLocal8Bit());
+  }
+  pe.envStorage.reserve(envMap.size());
+  pe.envp.reserve(static_cast<size_t>(envMap.size()) + 1);
+  for (auto it = envMap.cbegin(); it != envMap.cend(); ++it)
+    pe.envStorage.push_back(it.key() + '=' + it.value());
+  for (QByteArray &b : pe.envStorage)
+    pe.envp.push_back(b.data());
+  pe.envp.push_back(nullptr);
+
   return pe;
 }
 }
@@ -50,10 +69,9 @@ bool PtyProcess::start(const QString &program, const QStringList &args,
 
   m_childPid = forkpty(&m_masterFd, nullptr, nullptr, &win);
   if (m_childPid == 0) {
-    // Child: only async-signal-safe operations (plus setenv/execvp)
-    for (int i = 0; i < pe.envKeys.size(); ++i)
-      setenv(pe.envKeys[i].constData(), pe.envVals[i].constData(), 1);
-    execvp(pe.program.constData(), pe.argv.data());
+    // Child: only async-signal-safe operations.
+    // Environment was fully constructed before fork — no setenv/malloc here.
+    execvpe(pe.program.constData(), pe.argv.data(), pe.envp.data());
     _exit(127);
   }
   if (m_childPid < 0) { closeMaster(); return false; }

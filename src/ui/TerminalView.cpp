@@ -5,7 +5,7 @@ TerminalView::TerminalView(TerminalSession *session, TerminalConfig *config,
                            QWidget *parent)
     : TerminalViewCommon(session, config, parent) {
 
-  const auto profile = m_config->defaultProfile();
+  const auto &profile = m_session->profile();
   m_font = profile.font;
   m_background = profile.background;
   m_foreground = profile.foreground;
